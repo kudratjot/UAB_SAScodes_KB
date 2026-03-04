@@ -1,0 +1,833 @@
+libname dvt '----\data';
+
+proc import file="----\data\Iliocaval DVT Project Data Collection Raw Data Exclusions Applied.xlsx"
+		out=dvt.dvt
+		dbms=excel replace;
+		getnames=yes;
+		sheet="Data Collection$A1:BC77";
+		run; 
+
+data dvt;set dvt.dvt;
+if Estrogen_Therapy = 1 or Using_Oral_Contraceptives = 1 or Pregnant_at_diagnosis = 1 then Elevated_Estrogen_State = 1; 
+else Elevated_Estrogen_State= 0;
+
+array vars _numeric_ ;
+  do i=1 to dim(vars);
+  if vars(i)='' then vars(i)='.';
+  end;
+
+array c_vars _character_ ;
+  do i=1 to dim(c_vars);
+  if c_vars(i)='' then c_vars(i)='.';
+  end;
+drop i;
+
+if Race_Ethnicity='0' then race_n='0';
+else if Race_Ethnicity='1' then race_n='1';
+else if Race_Ethnicity in('2','3', '4') then race_n='3';
+
+run;
+
+proc contents data=dvt;run;
+
+proc freq data=dvt;
+tables 
+race_n Race_Ethnicity
+;
+run;
+
+proc freq data=dvt ;
+table Factor_V_Leiden_Disorder  ; 
+run;
+
+/*Demographics by Treatment*/
+/*demographics*/
+%let file=dvt;
+%let pred=sex;
+%let class=Anticoagulation;
+%let i=1;
+
+%macro categ(pred=,i=,); 
+
+*freq;
+proc freq data=&file.;
+table Anticoagulation/out=out;
+run;
+
+proc freq data=&file.;
+table &pred/out=p_freq&i;
+run;
+data p2_freq&i;set p_freq&i;
+rcount = put(count,8.); 
+numpct = strip(round(percent,0.1))||"% ("||strip(rcount)|| ")" ; 
+index=&i;
+keep index numpct;
+run;
+
+proc freq data = &file.; 
+tables &pred *  Anticoagulation/ missing chisq sparse outpct out = outfreq&i ; 
+output out = stats&i chisq fisher; 
+exact fisher;
+run; 
+
+proc sort data=outfreq&i; by &class.;run;
+
+data comb&i.;
+merge outfreq&i.(in=a) out(in=b keep=&class. count rename=(count=sub_count));
+by Anticoagulation;
+if a;
+run;
+
+data routfreq&i(rename = (&pred = variable)); 
+set comb&i; 
+length varname $20.; 
+rcount = put(count,8.); 
+rsub_count = put(sub_count,8.); 
+numpct = strip(round(pct_col,0.1))||"% ("||strip(rcount) || ")" ; 
+index = &i; 
+varname = vlabel(&pred); 
+keep &pred numpct index varname &class.; 
+run; 
+
+proc sort data = routfreq&i; 
+by variable; 
+run; 
+ 
+proc transpose data=routfreq&i out=woutfreq&i; 
+by variable index; 
+id Anticoagulation;
+var numpct;
+run;
+data rstats&i; 
+set stats&i; 
+length p_value $8.; 
+/* if P_PCHI <= 0.05 then do; */
+/*p_value = put(round(P_PCHI,0.0001),6.4) || "*";  */
+if XP2_FISH < 0.0001 then p_value = "<0.0001" || "*"; 
+else p_value = put(XP2_FISH,8.4); 
+keep p_value index; 
+index = &i; 
+run; 
+data final&i; 
+length varname $20.;
+merge woutfreq&i rstats&i; 
+by index; 
+varname="&pred.";
+if not first.index then do; 
+varname = " "; 
+p_value = " "; 
+end; 
+run;
+
+data finalg&i;
+merge final&i p2_freq&i;
+by index;
+run;
+%mend categ; 
+%categ (pred=Sex, i=1)
+%categ (pred=Race_Ethnicity, i=2)
+%categ (pred=cad, i=3) /*5*/
+%categ (pred=ckd, i=4) /*10*/
+%categ (pred=copd , i=5)/*7*/
+%categ (pred=dm , i=6)/*16*/
+%categ (pred=hld , i=7)/*20*/ 
+%categ (pred=htn , i=8)/*42*/ 
+%categ (pred=Obesity , i=9)/*40*/ 
+%categ (pred=OSA , i=10)/*5*/
+%categ (pred=Elevated_Estrogen_State, i=11) /*7*/
+%categ (pred=current_smoker , i=12)/*18*/
+%categ (pred=Prior_DVT , i=13)/*31*/
+%categ (pred=Recent_Surgery_or_Trauma , i=14)/*36*/
+%categ (pred=Current_Cancer_Diagnosis , i=15)/*16*/
+%categ (pred=May_Thurner_Anatomy , i=16)/*4*/
+%categ (pred=Factor_V_Leiden_Disorder , i=17)/*0*/
+%categ (pred=Prothrombotic_mutation_or_blood_, i=18) /*4*/
+%categ (pred=Pregnant_at_diagnosis, i=19) /*2*/
+%categ (pred=Location_of_DVT, i=20) 
+%categ (pred=Extent_of_DVT, i=21)
+%categ (pred=Symptoms, i=22);
+
+%categ (pred=Symptom_Resolution, i=23)
+%categ (pred=Post_Thrombotic_Syndrome, i=24)
+%categ (pred=Clot_Recurrence , i=25)
+%categ (pred=Residual_or_Recurrence_at_3_mont , i=26)
+%categ (pred=Residual_or_Recurrence_at_6_mont , i=27)
+%categ (pred=Residual_or_Recurrence_at_12_mon , i=28);
+
+data final_all;
+set finalg1-finalg28;
+run;
+
+ods excel file= '----\output\demo_1209.xlsx';
+proc print data=final_all;run;
+ods excel close;
+
+/*continuous*/
+proc univariate data=dvt plots;
+var Age_at_Diagnosis bmi Time_to_Symptom_Resolution ;
+run;
+
+proc means data=dvt;
+var Age_at_Diagnosis bmi Time_to_Symptom_Resolution;
+run;
+proc ttest data=dvt;
+class Anticoagulation;
+var Age_at_Diagnosis bmi Time_to_Symptom_Resolution;
+run;
+
+/*End of descriptives*/
+
+/*SR=0 means not resolved so it becomes event*/
+
+%macro logis(pred,i);
+ods output ParameterEstimates=par&i CLoddsWald=rodss&i;
+proc logistic data=dvt descending ;
+class &pred (ref='1')/param=ref;
+model Symptom_Resolution(event='1') =  &pred /clodds=wald ;
+run;
+ods output close;
+
+data parg&i ; set par&i ;
+keep Variable ProbChiSq index ;
+where Variable^='Intercept';
+index=1;
+run;
+
+data rodssg&i;set rodss&i;
+lowerCI=round(LowerCL,0.01);
+upperCI=round(UpperCL,0.01);
+CI_range =catx('-', lowerCI, upperCI);
+keep Effect OddsRatioEst CI_range index;
+index=1;
+run;
+
+data comb&i;
+merge rodssg&i parg&i;
+by index;
+run;
+
+%mend;
+%logis (cad, i=3) /*5*/
+%logis (ckd, i=4) /*10*/
+%logis (copd , i=5)/*7*/
+%logis (dm , i=6)/*16*/
+%logis (hld , i=7)/*20*/ 
+%logis (htn , i=8)/*42*/ 
+%logis (Obesity , i=9)/*40*/ 
+%logis (OSA , i=10)/*5*/
+%logis (Elevated_Estrogen_State, i=11) ;/*7*/
+
+data log_all1;
+set comb3-comb11;
+run;
+
+proc print data=log_all1;run;
+
+ods output ParameterEstimates=par_adj CLoddsWald=rodss_adj;
+proc logistic data=dvt descending ;
+class sex race_n cad ckd copd dm hld htn obesity osa Elevated_Estrogen_State (ref='1')/param=ref;
+model Symptom_Resolution(event='1') = Age_at_Diagnosis sex race_n cad ckd copd dm hld htn obesity osa Elevated_Estrogen_State /
+clodds=wald  expb stb lackfit;
+run;
+ods output close;
+data par_adj1 ; set par_adj ;
+keep Variable ProbChiSq index ;
+where Variable^='Intercept';
+index=1;
+run;
+data rodss_adj1;set rodss_adj;
+lowerCI=round(LowerCL,0.01);
+upperCI=round(UpperCL,0.01);
+CI_range =catx('-', lowerCI, upperCI);
+keep Effect OddsRatioEst CI_range index;
+index=1;
+run;
+data comb_adj;
+merge rodss_adj1 par_adj1;
+by index;
+run;
+
+ods excel file= '----\output\Odds_SR_1209.xlsx';
+proc print data=log_all1;run;
+proc print data=comb_adj;run;
+ods excel close;
+
+/*****************end*************************/
+
+proc logistic data=dvt descending;
+class sex race_n cad ckd copd dm hld htn obesity osa Elevated_Estrogen_State (ref='1')/param=ref;
+model Post_Thrombotic_Syndrome(event='1') = Age_at_Diagnosis sex race_n cad ckd copd dm hld htn obesity osa Elevated_Estrogen_State /
+clodds=wald  expb stb lackfit;
+output out = temp p=new;
+store dvt_logistic;
+run;
+
+%macro logis(pred,i);
+ods output ParameterEstimates=par&i CLoddsWald=rodss&i;
+proc logistic data=dvt descending ;
+class &pred (ref='1')/param=ref;
+model Post_Thrombotic_Syndrome(event='1') =  &pred /clodds=wald ;
+run;
+ods output close;
+
+data parg&i ; set par&i ;
+keep Variable ProbChiSq index ;
+where Variable^='Intercept';
+index=1;
+run;
+
+data rodssg&i;set rodss&i;
+lowerCI=round(LowerCL,0.01);
+upperCI=round(UpperCL,0.01);
+CI_range =catx('-', lowerCI, upperCI);
+keep Effect OddsRatioEst CI_range index;
+index=1;
+run;
+
+data combg&i;
+merge rodssg&i parg&i;
+by index;
+run;
+
+%mend;
+%logis (cad, i=3) /*5*/
+%logis (ckd, i=4) /*10*/
+%logis (copd , i=5)/*7*/
+%logis (dm , i=6)/*16*/
+%logis (hld , i=7)/*20*/ 
+%logis (htn , i=8)/*42*/ 
+%logis (Obesity , i=9)/*40*/ 
+%logis (OSA , i=10)/*5*/
+%logis (Elevated_Estrogen_State, i=11) ;/*7*/
+
+data log_allg1;
+set combg3-combg11;
+run;
+
+proc print data=log_allg1;run;
+
+ods output ParameterEstimates=parg_adj CLoddsWald=rodssg_adj;
+proc logistic data=dvt descending ;
+class sex race_n cad ckd copd dm hld htn obesity osa Elevated_Estrogen_State (ref='1')/param=ref;
+model Post_Thrombotic_Syndrome(event='1') = Age_at_Diagnosis sex race_n cad ckd copd dm hld htn obesity osa Elevated_Estrogen_State /
+clodds=wald  expb stb lackfit;
+run;
+ods output close;
+data parg_adj1 ; set parg_adj ;
+keep Variable ProbChiSq index ;
+where Variable^='Intercept';
+index=1;
+run;
+data rodssg_adj1;set rodssg_adj;
+lowerCI=round(LowerCL,0.01);
+upperCI=round(UpperCL,0.01);
+CI_range =catx('-', lowerCI, upperCI);
+keep Effect OddsRatioEst CI_range index;
+index=1;
+run;
+data combg_adj;
+merge rodssg_adj1 parg_adj1;
+by index;
+run;
+
+ods excel file= '----\output\Odds_PTS_1209.xlsx';
+proc print data=log_allg1;run;
+proc print data=combg_adj;run;
+ods excel close;
+
+/************************end*************************/
+
+%macro logis(pred,i);
+ods output ParameterEstimates=par&i CLoddsWald=rodss&i;
+proc logistic data=dvt descending ;
+class &pred (ref='1')/param=ref;
+model Symptom_Resolution(event='1') =  &pred /clodds=wald ;
+run;
+ods output close;
+
+data parg&i ; set par&i ;
+keep Variable ProbChiSq index ;
+where Variable^='Intercept';
+index=1;
+run;
+
+data rodssg&i;set rodss&i;
+lowerCI=round(LowerCL,0.01);
+upperCI=round(UpperCL,0.01);
+CI_range =catx('-', lowerCI, upperCI);
+keep Effect OddsRatioEst CI_range index;
+index=1;
+run;
+
+data comb_a&i;
+merge rodssg&i parg&i;
+by index;
+run;
+
+%mend;
+%logis (anticoagulation, i=3); /*5*/
+
+
+proc print data=log_allg1;run;
+
+ods output ParameterEstimates=parg_adj CLoddsWald=rodssg_adj;
+proc logistic data=dvt descending ;
+class anticoagulation sex race_n cad ckd copd dm hld htn obesity osa Elevated_Estrogen_State (ref='1')/param=ref;
+model Symptom_Resolution(event='1') = Age_at_Diagnosis anticoagulation sex race_n cad ckd copd dm hld htn obesity osa Elevated_Estrogen_State /
+clodds=wald  expb stb lackfit;
+run;
+ods output close;
+data parg_adj1 ; set parg_adj ;
+keep Variable ProbChiSq index ;
+where Variable^='Intercept';
+index=1;
+run;
+data rodssg_adj1;set rodssg_adj;
+lowerCI=round(LowerCL,0.01);
+upperCI=round(UpperCL,0.01);
+CI_range =catx('-', lowerCI, upperCI);
+keep Effect OddsRatioEst CI_range index;
+index=1;
+run;
+data combg_adj_a;
+merge rodssg_adj1 parg_adj1;
+by index;
+run;
+
+ods excel file= '----\output\Odds_treatment_1209.xlsx';
+proc print data=comb_a3;run;
+proc print data=combg_adj_a;run;
+ods excel close;
+
+/****************************************************/
+
+%macro logis(pred,i);
+ods output ParameterEstimates=par&i CLoddsWald=rodss&i;
+proc logistic data=dvt descending ;
+class &pred (ref='1')/param=ref;
+model Post_Thrombotic_Syndrome(event='1') =  &pred /clodds=wald ;
+run;
+ods output close;
+
+data parg&i ; set par&i ;
+keep Variable ProbChiSq index ;
+where Variable^='Intercept';
+index=1;
+run;
+
+data rodssg&i;set rodss&i;
+lowerCI=round(LowerCL,0.01);
+upperCI=round(UpperCL,0.01);
+CI_range =catx('-', lowerCI, upperCI);
+keep Effect OddsRatioEst CI_range index;
+index=1;
+run;
+
+data combb&i;
+merge rodssg&i parg&i;
+by index;
+run;
+
+%mend;
+%logis (anticoagulation, i=3); /*5*/
+
+proc print data=log_allg1;run;
+
+ods output ParameterEstimates=parg_adj CLoddsWald=rodssg_adj;
+proc logistic data=dvt descending ;
+class anticoagulation sex race_n cad ckd copd dm hld htn obesity osa Elevated_Estrogen_State (ref='1')/param=ref;
+model Post_Thrombotic_Syndrome(event='1') = Age_at_Diagnosis anticoagulation sex race_n cad ckd copd dm hld htn obesity osa Elevated_Estrogen_State /
+clodds=wald  expb stb lackfit;
+run;
+ods output close;
+data parg_adj1 ; set parg_adj ;
+keep Variable ProbChiSq index ;
+where Variable^='Intercept';
+index=1;
+run;
+data rodssg_adj1;set rodssg_adj;
+lowerCI=round(LowerCL,0.01);
+upperCI=round(UpperCL,0.01);
+CI_range =catx('-', lowerCI, upperCI);
+keep Effect OddsRatioEst CI_range index;
+index=1;
+run;
+data combg_adj_b;
+merge rodssg_adj1 parg_adj1;
+by index;
+run;
+
+ods excel file= '----\output\Odds_treatment_pts_1209.xlsx';
+proc print data=combb3;run;
+proc print data=combg_adj_b;run;
+ods excel close;
+
+/***********************************************************************************************/
+%macro logis(pred,i);
+ods output ParameterEstimates=par&i CLoddsWald=rodss&i;
+proc logistic data=dvt descending ;
+class &pred (ref='1')/param=ref;
+model Clot_Recurrence(event='1') =  &pred /clodds=wald ;
+run;
+ods output close;
+
+data parg&i ; set par&i ;
+keep Variable ProbChiSq index ;
+where Variable^='Intercept';
+index=1;
+run;
+
+data rodssg&i;set rodss&i;
+lowerCI=round(LowerCL,0.01);
+upperCI=round(UpperCL,0.01);
+CI_range =catx('-', lowerCI, upperCI);
+keep Effect OddsRatioEst CI_range index;
+index=1;
+run;
+
+data comb_cr&i;
+merge rodssg&i parg&i;
+by index;
+run;
+
+%mend;
+%logis (cad, i=3) /*5*/
+%logis (ckd, i=4) /*10*/
+%logis (copd , i=5)/*7*/
+%logis (dm , i=6)/*16*/
+%logis (hld , i=7)/*20*/ 
+%logis (htn , i=8)/*42*/ 
+%logis (Obesity , i=9)/*40*/ 
+%logis (OSA , i=10)/*5*/
+%logis (Elevated_Estrogen_State, i=11) ;/*7*/
+
+data log_all_cr1;
+set comb_cr3-comb_cr11;
+run;
+
+proc print data=log_all1;run;
+
+ods output ParameterEstimates=par_adj CLoddsWald=rodss_adj;
+proc logistic data=dvt descending ;
+class sex race_n cad ckd copd dm hld htn obesity osa Elevated_Estrogen_State (ref='1')/param=ref;
+model Clot_Recurrence(event='1') = Age_at_Diagnosis sex race_n cad ckd copd dm hld htn obesity osa Elevated_Estrogen_State /
+clodds=wald  expb stb lackfit;
+run;
+ods output close;
+data par_adj1 ; set par_adj ;
+keep Variable ProbChiSq index ;
+where Variable^='Intercept';
+index=1;
+run;
+data rodss_adj1;set rodss_adj;
+lowerCI=round(LowerCL,0.01);
+upperCI=round(UpperCL,0.01);
+CI_range =catx('-', lowerCI, upperCI);
+keep Effect OddsRatioEst CI_range index;
+index=1;
+run;
+data comb_adj_cr;
+merge rodss_adj1 par_adj1;
+by index;
+run;
+
+ods excel file= '----\output\Odds_cr_1209.xlsx';
+proc print data=log_all_cr1;run;
+proc print data=comb_adj_cr;run;
+ods excel close;
+
+/***************************************************************************************************/
+
+/***********************************************************************************************/
+%macro logis(pred,i);
+ods output ParameterEstimates=par&i CLoddsWald=rodss&i;
+proc logistic data=dvt descending ;
+class &pred (ref='1')/param=ref;
+model Clot_Recurrence(event='1') =  &pred /clodds=wald ;
+run;
+ods output close;
+
+data parg&i ; set par&i ;
+keep Variable ProbChiSq index ;
+where Variable^='Intercept';
+index=1;
+run;
+
+data rodssg&i;set rodss&i;
+lowerCI=round(LowerCL,0.01);
+upperCI=round(UpperCL,0.01);
+CI_range =catx('-', lowerCI, upperCI);
+keep Effect OddsRatioEst CI_range index;
+index=1;
+run;
+
+data comb_cr_treatment&i;
+merge rodssg&i parg&i;
+by index;
+run;
+
+%mend;
+%logis (anticoagulation, i=3); /*5*/
+
+
+data log_all_cr1;
+set comb_cr3-comb_cr11;
+run;
+
+proc print data=log_all1;run;
+
+ods output ParameterEstimates=par_adj CLoddsWald=rodss_adj;
+proc logistic data=dvt descending ;
+class anticoagulation sex race_n cad ckd copd dm hld htn obesity osa Elevated_Estrogen_State (ref='1')/param=ref;
+model Clot_Recurrence(event='1') = Age_at_Diagnosis anticoagulation sex race_n cad ckd copd dm hld htn obesity osa Elevated_Estrogen_State /
+clodds=wald  expb stb lackfit;
+run;
+ods output close;
+data par_adj1 ; set par_adj ;
+keep Variable ProbChiSq index ;
+where Variable^='Intercept';
+index=1;
+run;
+data rodss_adj1;set rodss_adj;
+lowerCI=round(LowerCL,0.01);
+upperCI=round(UpperCL,0.01);
+CI_range =catx('-', lowerCI, upperCI);
+keep Effect OddsRatioEst CI_range index;
+index=1;
+run;
+data comb_adj_cr_treat;
+merge rodss_adj1 par_adj1;
+by index;
+run;
+
+ods excel file= '----\output\Odds_cr_treat_1209.xlsx';
+proc print data=comb_cr_treatment3;run;
+proc print data=comb_adj_cr_treat;run;
+ods excel close;
+
+
+/*************************************************************************************************/
+
+ods rtf file= '----\output\freq_tsr_1209.rtf';
+proc means data=dvt n nmiss min max std maxdec=2; /*44 missing*/
+var Time_to_Symptom_Resolution;
+run;
+proc freq data=dvt;
+tables Clot_Recurrence*Symptom_Resolution ;
+where Time_to_Symptom_Resolution=.;
+run;
+ods rtf close;
+
+proc freq data=a1;
+tables Symptom_Resolution Clot_Recurrence Residual_or_Recurrence_at_3_mont Residual_or_Recurrence_at_6_mont Residual_or_Recurrence_at_12_mon Time_to_Symptom_Resolution ;
+run;
+
+data a1;set dvt;
+if Clot_Recurrence=0 and Symptom_Resolution=0 then delete;
+run;
+
+data a2;set a1;
+if Time_to_Symptom_Resolution^=. then do; time=Time_to_Symptom_Resolution;
+end;
+else if Residual_or_Recurrence_at_3_mont=1 then do; time=90;
+end;
+else if Residual_or_Recurrence_at_6_mont=1 then do; time=180;
+end;
+else if Residual_or_Recurrence_at_12_mon=1 then do; time=365;
+end;
+
+if Time_to_Symptom_Resolution=. then resolution=0;
+else if Time_to_Symptom_Resolution^=. then resolution=1;
+run;
+
+data a2;set a2;where time^=.;run;
+
+proc freq data=a2;tables time*resolution ;run;
+/*kp*/
+/*separate graph for each*/
+ods graphics on;
+ods rtf file="----\output\kp_1213.rtf";
+%macro kp(group,i);
+proc lifetest data=a2 PLOTS=SURVIVAL(ATRISK(ATRISKTICK)=0 90 180 365) ;
+time time*resolution(0);
+strata &group;
+run;
+%mend;
+%kp(anticoagulation,12);
+%kp (cad, i=3) /*5*/
+%kp (ckd, i=4) /*10*/
+%kp (copd , i=5)/*7*/
+%kp (dm , i=6)/*16*/
+%kp (hld , i=7)/*20*/ 
+%kp (htn , i=8)/*42*/ 
+%kp (Obesity , i=9)/*40*/ 
+%kp (OSA , i=10)/*5*/
+%kp (Elevated_Estrogen_State, i=11);/*7*/
+ods rtf close;
+/*end*/
+
+data a3;set a2;
+length comorbidity $10.;
+array comor{*} cad ckd copd dm hld obesity osa Elevated_Estrogen_State;
+do i=1 to dim(comor);
+comorbidity= vname(comor{i});
+presence=comor{i};
+output;
+end;
+run;
+
+ods rtf file="----\output\kp_overlay_1213.rtf";
+proc lifetest data=a3 PLOTS=SURVIVAL(ATRISK(ATRISKTICK)=0 90 180 365);
+time time*resolution(0);
+strata comorbidity;
+where presence=1;
+run;
+ods rtf close;
+*****************************************
+proc freq data=dvt;
+tables
+Anticoagulation 
+Anticoagulation_agent 
+Planned_Duration_of_Anticoagulan	
+IVC_Filter_Implantation	
+Type_of_Filter	
+Pharmagological_Thrombolysis 
+Thrombolysis_Platform	
+Mechanical_Thrombectomy 	
+Thrombectomy_Platform	
+Intravascular_Ultrasound_Used	
+Iliocaval_Stent_Insertion	
+Stent_Location	
+Post_Intervention_Anticoagulatio
+Surgery;
+run;
+
+%let file=dvt;
+%let pred=Anticoagulation;
+%let class=Symptom_Resolution;
+%let i=1;
+
+%macro categ(pred=,i=,); 
+
+*freq;
+proc freq data=&file.;
+table Symptom_Resolution/out=out;
+run;
+
+proc freq data=&file.;
+table &pred/out=p_freq&i;
+run;
+data p2_freq&i;set p_freq&i;
+rcount = put(count,8.); 
+numpct = strip(round(percent,0.1))||"% ("||strip(rcount)|| ")" ; 
+index=&i;
+keep index numpct;
+run;
+
+proc freq data = &file.; 
+tables &pred *  Symptom_Resolution/ missing chisq sparse outpct out = outfreq&i ; 
+output out = stats&i chisq fisher; 
+exact fisher;
+run; 
+
+proc sort data=outfreq&i; by &class.;run;
+
+data comb&i.;
+merge outfreq&i.(in=a) out(in=b keep=&class. count rename=(count=sub_count));
+by Symptom_Resolution;
+if a;
+run;
+
+data routfreq&i(rename = (&pred = variable)); 
+set comb&i; 
+length varname $20.; 
+rcount = put(count,8.); 
+rsub_count = put(sub_count,8.); 
+numpct = strip(round(pct_col,0.1))||"% ("||strip(rcount) || ")" ; 
+index = &i; 
+varname = vlabel(&pred); 
+keep &pred numpct index varname &class.; 
+run; 
+
+proc sort data = routfreq&i; 
+by variable; 
+run; 
+ 
+proc transpose data=routfreq&i out=woutfreq&i; 
+by variable index; 
+id Symptom_Resolution;
+var numpct;
+run;
+data rstats&i; 
+set stats&i; 
+length p_value $8.; 
+/* if P_PCHI <= 0.05 then do; */
+/*p_value = put(round(P_PCHI,0.0001),6.4) || "*";  */
+if XP2_FISH < 0.0001 then p_value = "<0.0001" || "*"; 
+else p_value = put(XP2_FISH,8.4); 
+keep p_value index; 
+index = &i; 
+run; 
+data final&i; 
+length varname $20.;
+merge woutfreq&i rstats&i; 
+by index; 
+varname="&pred.";
+if not first.index then do; 
+varname = " "; 
+p_value = " "; 
+end; 
+run;
+
+data finalg&i;
+merge final&i p2_freq&i;
+by index;
+run;
+
+data finalg&i;set finalg&i;
+variable_c=put(variable,best32.);
+drop variable;
+run;
+
+%mend categ; 
+
+%categ (pred=Anticoagulation, i=1) 
+%categ (pred=Anticoagulation_agent , i=2)
+%categ (pred=IVC_Filter_Implantation, i=3)	
+%categ (pred=Pharmagological_Thrombolysis , i=4)
+%categ (pred=Thrombolysis_Platform	, i=5)
+%categ (pred=Mechanical_Thrombectomy 	, i=6)
+%categ (pred=Thrombectomy_Platform	, i=7)
+%categ (pred=Intravascular_Ultrasound_Used	, i=8)
+%categ (pred=Iliocaval_Stent_Insertion	, i=9)
+%categ (pred=Post_Intervention_Anticoagulatio, i=10)
+%categ (pred=Surgery, i=11);
+
+data final_all;
+set finalg1-finalg10;
+run;
+
+ods excel file= '----\output\interventions_1213.xlsx';
+proc print data=final_all;run;
+ods excel close;
+
+/****************************************/
+
+proc freq data=dvt;
+tables
+Symptom_Resolution
+Clot_Recurrence
+Residual_or_Recurrence_at_3_mont
+Residual_or_Recurrence_at_6_mont
+Residual_or_Recurrence_at_12_mon
+;
+run;
+
+ods rtf file = "----\output\datacheck_12172024.rtf";
+proc freq data=dvt;
+tables Symptom_Resolution*Clot_Recurrence;
+run;
+proc freq data=a2;tables time*resolution ;run;
+ods rtf close;
+
+*END*
