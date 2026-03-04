@@ -1,0 +1,185 @@
+proc import datafile ='-----\data\CVSdata_06032025.csv'
+out=cvs
+dbms=csv replace;
+getnames=yes;
+GUESSINGROWS=20;
+run;
+
+proc freq data=cvs2; run;
+proc means data=cvs; var  ;run;
+
+data cvs2;set cvs;
+if New_Gen_vs__Old_Gen in ('0' '0; 0' '1; 0') then New_Gen_vs__Old_Gen='0';
+else if New_Gen_vs__Old_Gen in ('1') then New_Gen_vs__Old_Gen='1';
+
+if Covered_vs__Uncovered in ('0' ) then Covered_vs__Uncovered='0';
+else if Covered_vs__Uncovered in ('1' '1; 1') then Covered_vs__Uncovered='1';
+
+if Size_of_Stent in ('100; 80') then Size_of_Stent=(100+80)-3;
+if Size_of_Stent in ('40; 60') then Size_of_Stent=(40+60)-3;
+if Size_of_Stent in ('80;40') then Size_of_Stent=(80+40)-3;
+if Diameter_of_Stent in ('12;12' ) then Diameter_of_Stent='12';
+if Diameter_of_Stent in ('14; 14') then Diameter_of_Stent='14';
+if Diameter_of_Stent in ('16; 14') then Diameter_of_Stent='15';
+
+Size_of_Stent2=input(Size_of_Stent,8.);
+Diameter_of_Stent2=input(Diameter_of_Stent,8.);
+
+if Diameter_of_Stent  <12 then Stent_dia_12=0;
+else if Diameter_of_Stent  >=12 then Stent_dia_12=1;
+
+if Diameter_of_Stent  <14 then Stent_dia_14=0;
+else if Diameter_of_Stent  >=14 then Stent_dia_14=1;
+
+if Diameter_of_Stent  <16 then Stent_dia_16=0;
+else if Diameter_of_Stent  >=16 then Stent_dia_16=1;
+
+if Stent_Patency_Rate_at_Follow_up in(0) then stent_patency_event=0;
+else if Stent_Patency_Rate_at_Follow_up in(1 2) then stent_patency_event=1;
+
+run;
+
+
+/* Summary Stats */
+proc freq data=cvs2;tables Stent_Patency_Rate_at_Follow_up stent_patency_event;run;
+
+proc means data=cvs2 n nmiss mean std median min max maxdec=2;
+var Age_at_Procedure BMI Size_of_Stent2 Diameter_of_Stent2 Time_to_Follow_up__in_months_;
+output out=cvs_mean;
+class stent_patency_event;
+run;
+data cvs_mean;set cvs_mean;
+if stent_patency_event= ' ' then stent_patency_event=25;
+run;
+proc sort data=cvs_mean; by _STAT_;run;
+proc transpose data=cvs_mean out=tcvs_mean;
+id stent_patency_event  _STAT_;
+var Age_at_Procedure BMI Size_of_Stent2 Diameter_of_Stent2 Time_to_Follow_up__in_months_;
+run;
+data tcvs_mean2;set tcvs_mean;
+drop _25MEAN _25STD _1MEAN _1STD _0MEAN _0STD _25MIN _25MAX _1MIN _1MAX _0MIN _0MAX;
+all_Mean_std = catx(' ', put(_25MEAN, 8.2), '(' || strip(put(_25STD, 8.2)) || ')');
+all_range = catx('-', put(_25MIN,8.2), put(_25MAX,8.2));
+no_Mean_std = catx(' ', put(_1MEAN, 8.2), '(' || strip(put(_1STD, 8.2)) || ')');
+no_range = catx('-', put(_1MIN,8.2), put(_1MAX,8.2));
+yes_Mean_std = catx(' ', put(_0MEAN, 8.2), '(' || strip(put(_0STD, 8.2)) || ')');
+yes_range = catx('-', put(_0MIN,8.2), put(_0MAX,8.2));
+run;
+ods excel file='-----\outputs\cvs_mean_0606.xlsx';
+proc print data=tcvs_mean2;run;
+ods excel close;
+
+proc ttest data=cvs2 ;
+var Age_at_Procedure BMI Size_of_Stent2 Diameter_of_Stent2 Time_to_Follow_up__in_months_;
+class stent_patency_event;
+run;
+
+proc freq data=cvs2;
+tables (Sex Ethnicity Current_Smoker ESRD Dialysis_Patient Current_Cancer_Diagnosis Coagulation_Disorder 
+Imaging_Method_Used Stenosis_Type New_Gen_vs__Old_Gen Covered_vs__Uncovered Anti_platelet_anticoagulation Symptoms_Resolved_
+Follow_up_Imaing_Modality Stent_Patency_Rate_at_Follow_up Re_intervention_Rate Re_intervention_Type Stent_dia_12 Stent_dia_14 Stent_dia_16)/ nocum ;
+run;
+proc freq data=cvs2;
+tables (Sex Ethnicity Current_Smoker ESRD Dialysis_Patient Current_Cancer_Diagnosis Coagulation_Disorder 
+Imaging_Method_Used Stenosis_Type New_Gen_vs__Old_Gen Covered_vs__Uncovered Anti_platelet_anticoagulation Symptoms_Resolved_
+Follow_up_Imaing_Modality Stent_Patency_Rate_at_Follow_up Re_intervention_Rate Re_intervention_Type Stent_dia_12 Stent_dia_14 Stent_dia_16)*stent_patency_event/nocum norow nopercent;
+run;
+
+proc freq data=cvs2;
+tables (Sex Ethnicity Current_Smoker ESRD Dialysis_Patient Current_Cancer_Diagnosis  
+Imaging_Method_Used Stenosis_Type New_Gen_vs__Old_Gen Covered_vs__Uncovered Anti_platelet_anticoagulation Symptoms_Resolved_
+Follow_up_Imaing_Modality Stent_Patency_Rate_at_Follow_up Re_intervention_Rate Re_intervention_Type Stent_dia_12 Stent_dia_14 Stent_dia_16)*stent_patency_event/nocum norow nopercent fisher;
+run;
+
+proc sgplot data=cvs2;
+vbox Diameter_of_Stent2/group=stent_patency_event groupdisplay=cluster datalabel dataskin=gloss;
+scatter x=Diameter_of_Stent2 y=Size_of_Stent2;
+xaxis label='Patency 0=Patent 1=Occlusion/stenosis';
+yaxis label='Stent diamteter';
+title 'Stent diameter distribution by Patency';
+run;
+
+/*****/
+proc freq data=cvs2;
+tables 
+stent_patency_event*Sex*Current_Smoker*Current_Cancer_Diagnosis*ESRD*Imaging_Method_Used*
+New_Gen_vs__Old_Gen*Covered_vs__Uncovered*Stent_dia_14*
+Follow_up_Imaing_Modality*Re_intervention_Rate*Re_intervention_Type
+/list;
+run;
+
+
+/*Logistic*/
+
+proc logistic data=cvs2 descending;
+class New_Gen_vs__Old_Gen Sex;
+model stent_patency_event(event='1')= Sex New_Gen_vs__Old_Gen  Diameter_of_Stent2;
+run;
+quit;
+proc logistic data=cvs2 descending;
+class New_Gen_vs__Old_Gen Covered_vs__Uncovered ;
+model Re_intervention_Rate(event='1')=  New_Gen_vs__Old_Gen Covered_vs__Uncovered Diameter_of_Stent2;
+run;
+quit;
+
+/* Firth Penalized Cox Regression */
+proc phreg data=cvs2;
+class New_Gen_vs__Old_Gen Covered_vs__Uncovered ;
+model Time_to_Follow_up__in_months_ * stent_patency_event(1) =  New_Gen_vs__Old_Gen Covered_vs__Uncovered  Diameter_of_Stent2 / firth;
+title "Firth Cox Model for Patency";
+run;
+
+/* Firth Penalized Cox Regression */
+proc phreg data=cvs2;
+class New_Gen_vs__Old_Gen Covered_vs__Uncovered ;
+model Time_to_Follow_up__in_months_ * Re_intervention_Rate(1) = New_Gen_vs__Old_Gen Covered_vs__Uncovered  Diameter_of_Stent2 / firth;
+title "Firth Cox Model for Re_intervention_Rate";
+run;
+
+proc freq data=cvs2; tables sex*Stent_Patency_Rate_at_Follow_up;run;
+
+/*  Kaplan-Meier Survival Analysis */
+ods graphics on;
+proc lifetest data=cvs2 plots=survival(atrisk);
+    time Time_to_Follow_up__in_months_ *stent_patency_event(0);
+	strata Sex;
+    title "KM Curve";
+run;
+
+proc lifetest data=cvs2 plots=survival(atrisk);
+    time Time_to_Follow_up__in_months_ *stent_patency_event(0);
+    strata New_Gen_vs__Old_Gen;
+    title "KM Curve: New vs. Old Generation";
+run;
+
+proc lifetest data=cvs2 plots=survival(atrisk);
+    time Time_to_Follow_up__in_months_ * stent_patency_event(0);
+    strata Covered_vs__Uncovered;
+    title "KM Curve: Covered vs. Uncovered Stents";
+run;
+
+/* For Diameter Thresholds */
+proc lifetest data=cvs2 plots=survival(atrisk);
+    time Time_to_Follow_up__in_months_ * stent_patency_event(0);
+    strata Stent_dia_12;
+    title "KM Curve: Diameter =12mm vs <12mm";
+run;
+
+proc lifetest data=cvs2 plots=survival(atrisk);
+    time Time_to_Follow_up__in_months_ * stent_patency_event(0);
+    strata Stent_dia_14;
+    title "KM Curve: Diameter =14mm vs <14mm";
+run;
+
+proc lifetest data=cvs2 plots=survival(atrisk);
+    time Time_to_Follow_up__in_months_ * stent_patency_event(0);
+    strata Stent_dia_16;
+    title "KM Curve: Diameter =16mm vs <16mm";
+run;
+
+proc lifetest data=cvs2 plots=survival(atrisk);
+    time Time_to_Follow_up__in_months_ * stent_patency_event(0);
+    title "KM Curve: Overall";
+run;
+
+*END*
