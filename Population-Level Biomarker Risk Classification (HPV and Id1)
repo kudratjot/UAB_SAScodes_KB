@@ -1,0 +1,631 @@
+*ROC curve with Youden’s index to determine optimal cut-off for skin/SMG ratio prediction, including PPV, NPV, sensitivity, and specificity calculations*;
+proc import file="----\data\dataROC.xlsx"
+	out=SMG
+	DBMS=excel replace;
+	getnames=Yes;
+	sheet="SMG:$A1:B844";
+run;
+
+/*Creating Binary outcomes*/
+data smg2;
+set smg;
+if outcome="positive" then smg_status=1;
+else if  outcome="negative" then smg_status=0;
+run; 
+
+proc freq data=smg2; table smg_status;run;
+
+/*ROC*/
+Ods rtf file="---\output\ROC of SMG.rtf";
+
+ods graphics on;
+ods output 	logistic.parameterestimates=aaa 
+			Logistic.ROCCurve=bbb;
+ods output classification=ctable;
+title "ROC plot for SMG";
+proc logistic data = smg2 plots(only)=roc outest=parms(keep=intercept SMG_ratio);
+model SMG_status(event="1") = SMG_Ratio/ ctable outroc=rocstats;
+output out=preds predprobs=crossvalidate; /* create a data set containing the cross validated predicted probabilities */
+run;
+ods graphics off;
+
+/*Younden's J index*/
+/*ppv= tp/(tp+fp)
+npv=tn+(tn+fn)*/
+data roc2;
+set rocstats;
+logit=log(_PROB_/(1-_PROB_));
+smg_cutt = (logit+2.7301)/7.7311;
+sensitivity = _SENSIT_ ;
+specificity = 1 - _1MSPEC_ ;
+YJ = sensitivity+specificity-1;
+ppv= _POS_/(_POS_+_FALPOS_);
+npv= _NEG_/(_NEG_+_FALNEG_);
+run;
+
+proc sort data=roc2;by descending YJ;run;
+
+proc print data=roc2(obs=1);
+var _PROB_ sensitivity specificity ppv npv YJ smg_cutt;
+run;
+
+Ods rtf close;
+
+
+/***********Skin Ratio******/
+proc import file="---\data\dataROC.xlsx"
+	out=Skin
+	DBMS=excel replace;
+	getnames=Yes;
+	sheet="skin:$A1:B622";
+run;
+
+data skin2;
+set skin;
+if outcome="Positive" then skin_status=1;
+else if  outcome="negative" then skin_status=0;
+run; 
+
+proc freq data=skin2; tables skin_status;run;
+
+Ods rtf file="---\output\ROC of Skin.rtf";
+
+ods graphics on;
+ods output 	logistic.parameterestimates=aaa
+			Logistic.ROCCurve=bbb;
+ods output classification=ctable;
+title "ROC plot for Skin";
+proc logistic data = Skin2 plots(only)=roc outest=parms(keep=intercept Skin_ratio);
+model Skin_status(event="1") = Skin_Ratio/ ctable outroc=rocstats;
+output out=preds predprobs=crossvalidate; /* create a data set containing the cross validated predicted probabilities */
+run;
+ods graphics off;
+
+/*Younden's J index*/
+/*ppv= tp/(tp+fp)
+npv=tn+(tn+fn)*/
+data roc2;
+set rocstats;
+logit=log(_PROB_/(1-_PROB_));
+skin_cutt = (logit+3.0135)/1.5129;
+sensitivity = _SENSIT_ ;
+specificity = (1 - _1MSPEC_ );
+YJ = sensitivity+specificity-1;
+ppv= _POS_/(_POS_+_FALPOS_);
+npv= _NEG_/(_NEG_+_FALNEG_);
+run;
+
+proc sort data=roc2;by descending YJ;run;
+
+proc print data=roc2(obs=1);
+var _PROB_ sensitivity specificity ppv npv YJ skin_cutt;
+run;
+
+Ods rtf close;
+
+*ROC analysis + Generalized Linear Model (GLM) correlating ID1-positive percentage with demographic risk factors for HPV*;
+
+libname corr '---\data';
+
+data corr; set corr.corr;
+if normal_vs_cancer='normal' then cancer='0';
+else if normal_vs_cancer='cancer' then cancer='1';
+if race in ('Asian' 'Hispanic') then race='other';
+if Comorbidities = 'Diabetes, Hypertension' then Comorbidities='Hypertension, Diabetes';
+run;
+
+proc freq data=corr;tables Comorbidities;run;
+
+ods excel file ="---\output\demo.xlsx";
+proc freq data=corr;
+tables _character_ ;
+run;
+proc means data=corr n nmiss mean median std min max maxdec=2;
+var _numeric_;
+run;
+ods excel close;
+
+proc univariate data=corr plots;
+var _numeric_;
+run;
+
+/*Biavriate and then check and then run correlation*/
+proc corr data=corr pearson; /*linear relationshio -rho*/
+var  Id1_positive__ BMI Id1_negative__ age;
+run;
+
+ods excel file ="---\output\univariate.xlsx";
+proc corr data=corr pearson PLOTS=SCATTER(NVAR=all);
+var   BMI Id1_negative__ age;
+with Id1_positive__;
+run;
+
+%macro corr(var); /*f-statistic significant p-value indicated differnce in groups */
+proc glm data=corr;
+class Comorbidities Frequency_of_Pap_Smear HPV_Status Reccurence normal_vs_cancer race stage type;
+model  Id1_positive__ =  &var ;
+run;
+%mend;
+%corr(Comorbidities);/*significant*/
+%corr(Frequency_of_Pap_Smear);
+%corr(HPV_Status);
+%corr(Reccurence);
+%corr(race);
+%corr(stage);/*significant*/
+%corr(type);/*significant*/
+%corr(normal_vs_cancer);/*significant*/
+ods excel close;
+
+/*ROC*/
+
+ods graphics on;
+ods output 	logistic.parameterestimates=aaa 
+			Logistic.ROCCurve=bbb;
+ods output classification=ctable;
+title "ROC plot";
+proc logistic data =corr plots(only)=roc outest=parms(keep=intercept Id1_positive__);
+model cancer(event="1") = Id1_positive__/ ctable outroc=rocstats;
+output out=preds predprobs=crossvalidate; /* create a data set containing the cross validated predicted probabilities */
+ROC; 
+ROCCONTRAST; 
+run;
+ods graphics off;
+
+/*Younden's J index*/
+
+DATA CUTOFF; SET rocstats;
+_SPECIF_ = (1 - _1MSPEC_);
+LOGIT=LOG(_PROB_/(1-_PROB_));
+CUT_POINT=(LOGIT + 1.2202)/0.1132; /*CUT_POINT=(LOGIT + intercept)/test(slope);*/
+J = _SENSIT_ + _SPECIF_ - 1; /*max*/
+D = SQRT ((1-_SENSIT_)**2 + (1-_SPECIF_)**2); /*min*/
+DIFF= ABS (_SENSIT_ - _SPECIF_); /*min*/
+RUN; 
+
+proc sort data=cutoff;by desending J;run;
+
+proc print data=cutoff(obs=1);run;
+
+proc glm data=corr ;
+class Comorbidities stage type cancer ;
+model Id1_positive__ = Comorbidities stage type cancer;
+run;
+
+
+%macro corr(var); /*f-statistic significant p-value indicated differnce in groups */
+proc glm data=corr;
+class Comorbidities Frequency_of_Pap_Smear HPV_Status Reccurence normal_vs_cancer race stage type;
+model  Id1_positive__ =  &var ;
+run;
+%mend;
+%corr(Comorbidities);/*significant*/
+%corr(stage);/*significant*/
+%corr(type);/*significant*/
+%corr(normal_vs_cancer);/*significant*/
+
+
+proc freq data=corr;
+   tables Comorbidities*Stage / chisq fisher; /*no significant*/
+   tables Comorbidities*Type / chisq fisher; /*no significant */
+   tables Comorbidities*normal_vs_cancer / chisq fisher; /*no significan*/
+   tables Stage*Type / chisq fisher; /*significant*/
+   tables Stage*normal_vs_cancer / chisq fisher; /*significant*/
+   tables Type*normal_vs_cancer / chisq fisher; /*significant*/
+run;
+
+proc glm data=corr;
+    class comorbidities(ref='None') stage(ref='normal') Type(ref='normal') normal_vs_cancer(ref='normal');
+    model Id1_positive__ = comorbidities stage Type ;
+run;
+
+/*Table 1*/
+ods excel file ="---\output\class.xlsx";
+%macro class(class);
+proc means data=corr n nmiss mean std median min max maxdec=2 freq;
+class &class;
+var Id1_positive__ ;
+run;
+%mend;
+%class(Comorbidities);/*significant*/
+%class(Frequency_of_Pap_Smear);
+%class(HPV_Status);
+%class(Reccurence);
+%class(race);
+%class(stage);/*significant*/
+%class(type);/*significant*/
+%class(normal_vs_cancer);/*significant*/
+ods excel close;
+
+/*Table2*/
+
+data corr1; set corr;
+if Id1_positive__ <=34.2586 then ID1='0';
+else if Id1_positive__ >34.2586 then ID1='1';
+run;
+proc freq data=corr1;
+tables ID1;
+run;
+
+ods excel file ="---\output\class2.xlsx";
+%macro class(class);
+proc freq data=corr1 ;
+Tables &class*ID1/chisq ;
+run;
+%mend;
+%class(Comorbidities);/*significant*/
+%class(stage);/*significant*/
+%class(type);/*significant*/
+%class(normal_vs_cancer);/*significant*/
+ods excel close;
+
+%let file=corr1;
+%let pred=Comorbidities;
+%let class=ID1;
+%let i=1;
+
+%macro categ(pred=,i=,); 
+
+*freq;
+proc freq data=&file.;
+table ID1/out=out;
+run;
+
+proc freq data = &file.; 
+tables &pred *  ID1/ missing chisq sparse outpct out = outfreq&i ; 
+output out = stats&i chisq fisher; 
+exact fisher;
+run; 
+
+proc sort data=outfreq&i; by &class.;run;
+
+data comb&i.;
+merge outfreq&i.(in=a) out(in=b keep=&class. count rename=(count=sub_count));
+by ID1;
+if a;
+run;
+
+
+data routfreq&i(rename = (&pred = variable)); 
+set comb&i; 
+length varname $20.; 
+rcount = put(count,8.); 
+rsub_count = put(sub_count,8.); 
+numpct = strip(round(pct_col,0.1))||"% ("||strip(rcount) ||"/"||strip(rsub_count)|| ")" ; 
+index = &i; 
+varname = vlabel(&pred); 
+keep &pred numpct index varname &class.; 
+run; 
+
+proc sort data = routfreq&i; 
+by variable; 
+run; 
+ 
+proc transpose data=routfreq&i out=woutfreq&i; 
+by variable index; 
+id ID1;
+var numpct;
+run;
+
+
+data rstats&i; 
+set stats&i; 
+length p_value $8.; 
+/* if P_PCHI <= 0.05 then do; */
+/*p_value = put(round(P_PCHI,0.0001),6.4) || "*";  */
+if XP2_FISH < 0.0001 then p_value = "<0.0001" || "*"; 
+else p_value = put(XP2_FISH,8.4); 
+keep p_value index; 
+index = &i; 
+run; 
+
+data final&i; 
+length varname $20.;
+merge woutfreq&i rstats&i; 
+by index; 
+varname="&pred.";
+if not first.index then do; 
+varname = " "; 
+p_value = " "; 
+end; 
+run;
+
+%mend categ; 
+
+%categ (pred= Comorbidities, i=1);* no format;
+%categ (pred= stage, i=2);*noformat;
+%categ (pred= type, i=3);*noformat;
+%categ (pred= normal_vs_cancer, i=4);*noformat;
+
+ods excel file ="---\output\class2.xlsx";
+proc print data=final1;run;
+proc print data=final2;run;
+proc print data=final3;run;
+proc print data=final4;run;
+ods excel close;
+
+
+/*Multivariable analysis*/
+/*Multivariable analysis with all variables as X, Id%+ is the Y;
+Use mean +/- I SD as cut point to correlate with all variables.*/
+
+proc means data=corr maxdec=2;
+var Id1_positive__; /*Mean = 38.67 and std = 19.60*/
+run;
+
+/*38.67-19.60 = 19.07and 38.67+19.60 = 58.27  - Cut-off range = 19.07-58.27*/
+
+data corr2; set corr;
+if 19.07 <= Id1_positive__  <=58.27 then ID1_range = '1';
+else ID1_range = '0';
+run;
+
+proc freq data=corr2;
+tables ID1_range;
+run;
+
+/*Table 1- demo*/
+
+/*10/07/2024*/
+proc sort data=corr2;by id1_range;run;
+
+%macro lsmean (class1,i);
+proc means data=corr2 mean std median min max maxdec=2;
+class &class1 ID1_range;
+var Id1_positive__;
+ods output  Summary=means&i;
+run;
+
+proc mixed data=corr2;
+class &class1 ID1_range;
+model Id1_positive__= &class1 ID1_range &class1*ID1_range;
+lsmeans  &class1*ID1_range/adjust=tukey;
+ods output Diffs=diff_tmp&i;
+run;
+
+data diff_tmp&i;set diff_tmp&i;
+keep &class1 Adjp;
+if &class1=_&class1;
+run;
+
+data final&i;
+rename &class1=variable; 
+merge means&i diff_tmp&i ;
+by &class1;
+run;
+
+data final1&i;set final&i;
+drop Id1_positive___mean Id1_positive___StdDev Id1_positive___Median Id1_positive___Min Id1_positive___Max;
+mean_std=cats(put(Id1_positive___mean,8.2),'(',put(Id1_positive___StdDev,8.2),')');
+Median_range = cats(put(Id1_positive___Median, 8.2), ' (', put(Id1_positive___Min, 8.2), '-', put(Id1_positive___Max, 8.2), ')'); 
+run;
+
+data group0&i group1&i;
+set final1&i;
+if ID1_range=0 then output group0&i;
+if ID1_range=1 then output group1&i;
+run;
+data group0&i;set group0&i;
+rename mean_std=mean_std_0;
+rename Median_range=Median_range_0;
+rename NObs=NObs_0 Adjp=Adjp_0 ;
+rename ID1_range=ID1_range_0;
+run;
+data group1&i;set group1&i;
+rename mean_std=mean_std_1 ;
+rename Median_range=Median_range_1;
+rename NObs=NObs_1;
+rename Adjp=Adjp_1 ;
+rename ID1_range=ID1_range_1;
+run;
+proc sort data= group1&i; by variable;run;
+proc sort data= group0&i; by variable;run;
+data final_out&i;
+merge group0&i group1&i;
+by variable;
+run;
+
+%mend;
+%lsmean(Comorbidities,1);
+%lsmean(normal_vs_cancer,2);
+%lsmean(Frequency_of_Pap_Smear,3);
+%lsmean(HPV_Status,4);
+%lsmean(Reccurence,5);
+%lsmean(race,6);
+%lsmean(stage,7);
+%lsmean(type,8);
+
+data fout; set final_out1-final_out8;run;
+
+ods excel file ='---\output\comp_1072024.xlsx';
+proc print data=fout;run;
+ods excel close;
+
+/*Table 2*/
+proc freq data=corr2;tables _character_;run;
+
+proc glm data=corr2;
+class race normal_vs_cancer stage type HPV_Status Comorbidities Frequency_of_Pap_Smear Reccurence ;
+Model Id1_positive__ = age bmi race normal_vs_cancer stage type HPV_Status Comorbidities Frequency_of_Pap_Smear Reccurence /solution ss3;
+run;
+quit;
+
+proc glm data=corr2; /*without normal cancer*/
+class race  stage type HPV_Status Comorbidities Frequency_of_Pap_Smear Reccurence ;
+Model Id1_positive__ = age bmi race  stage type HPV_Status Comorbidities Frequency_of_Pap_Smear Reccurence /solution ss3;
+run;
+quit;
+
+proc glm data=corr2;/*without comor stage type*/
+class race normal_vs_cancer  HPV_Status  Frequency_of_Pap_Smear Reccurence ;
+Model Id1_positive__ = age bmi race normal_vs_cancer  HPV_Status  Frequency_of_Pap_Smear Reccurence /solution ss3;
+run;
+quit;
+
+proc glm data=corr2;
+class   stage type  Comorbidities   ;
+Model Id1_positive__ = stage type Comorbidities  /solution ss3;
+run;
+quit;
+
+ data corr3;set corr;
+if stage ='IA1' then stage_n=1;
+else if stage ='IA2' then stage_n=2;
+else if stage ='IB1' then stage_n=3;
+else if stage ='IB2' then stage_n=4;
+else if stage ='IB3' then stage_n=5;
+else if stage ='normal' then stage_n=6;
+
+if type ='adenocarcinoma' then type_n=1;
+else if type ='cervix cancer' then type_n=2;
+else if type ='clear cell carcinoma' then type_n=3;
+else if type ='endocervical adenocarcinoma' then type_n=4;
+else if type ='high grade neuroendocrine' then type_n=5;
+else if type ='normal' then type_n=6;
+else if type ='squamous cell carcinoma' then type_n=7;
+
+if Comorbidities ="Diabetes, Hypertension" then Comorbidities_n=1; 
+else if Comorbidities ="Diabetes, Obesity" then Comorbidities_n=2;
+else if Comorbidities ="Hypertension" then Comorbidities_n=3;
+else if Comorbidities ="Hypertension, Diabetes" then Comorbidities_n=4;
+else if Comorbidities ="None" then Comorbidities_n=5;
+else if Comorbidities ="Obesity" then Comorbidities_n=6;
+else if Comorbidities ="Obesity, Hypertension" then Comorbidities_n=7;
+
+if stage in ('IA1' 'IA2') then stage_cat='A';
+else if stage in ('IB1' 'IB2' 'IB3') then stage_cat='B';
+else if stage in ('normal') then stage_cat='normal';
+run;
+
+ods rtf file= '---\output\glm_10112024.rtf';
+ods excel file= '---\output\glm2_10142024.xlsx';
+proc glm data=corr3;
+class race normal_vs_cancer stage type HPV_Status Comorbidities Frequency_of_Pap_Smear Reccurence ;
+Model Id1_positive__ = age bmi race normal_vs_cancer stage type HPV_Status Comorbidities Frequency_of_Pap_Smear Reccurence / ss3 solution;
+run;
+quit;
+proc glm data=corr3; /*without normal cancer var*/
+class race  stage type HPV_Status Comorbidities Frequency_of_Pap_Smear Reccurence ;
+Model Id1_positive__ = age bmi race  stage type HPV_Status Comorbidities Frequency_of_Pap_Smear Reccurence / ss3 solution ;
+run;
+quit;
+proc glm data=corr3;
+class race normal_vs_cancer HPV_Status  Frequency_of_Pap_Smear Reccurence ;
+Model Id1_positive__ = age bmi  race normal_vs_cancer  HPV_Status  Frequency_of_Pap_Smear Reccurence / ss3 solution ;
+run;
+quit;
+proc glm data=corr3;
+class race normal_vs_cancer HPV_Status  Frequency_of_Pap_Smear Reccurence ;
+Model Id1_positive__ = age bmi Comorbidities_n race normal_vs_cancer  HPV_Status  Frequency_of_Pap_Smear Reccurence / ss3 solution;
+run;
+quit;
+proc glm data=corr3;
+class race Reccurence ;
+Model Id1_positive__ =  age race Reccurence / ss3 solution;
+run;
+quit;
+ods excel close;
+
+proc glm data=corr3;
+class  normal_vs_cancer  stage  type ;
+Model Id1_positive__ =normal_vs_cancer  stage  type normal_vs_cancer*stage normal_vs_cancer*type/ ss3;
+run;
+quit;
+
+proc glm data=corr3;
+class   stage  type Comorbidities;
+Model Id1_positive__ = Comorbidities stage  type/ ss3;
+run;
+quit;
+
+proc glm data=corr3;
+class  race stage   ;
+Model Id1_positive__ =  race stage  / ss3;
+run;
+quit;
+
+ods rtf close;
+
+%let file=corr3;
+%let pred=Comorbidities;
+%let class=normal_vs_cancer;
+%let i=1;
+
+%macro categ(pred=,i=,); 
+
+*freq;
+proc freq data=&file.;
+table normal_vs_cancer/out=out;
+run;
+
+proc freq data = &file.; 
+tables &pred *  normal_vs_cancer/ missing chisq sparse outpct out = outfreq&i ; 
+output out = stats&i chisq fisher; 
+exact fisher;
+run; 
+
+proc sort data=outfreq&i; by &class.;run;
+
+data comb&i.;
+merge outfreq&i.(in=a) out(in=b keep=&class. count rename=(count=sub_count));
+by normal_vs_cancer;
+if a;
+run;
+
+
+data routfreq&i(rename = (&pred = variable)); 
+set comb&i; 
+length varname $20.; 
+rcount = put(count,8.); 
+rsub_count = put(sub_count,8.); 
+numpct = strip(round(pct_col,0.1))||"% ("||strip(rcount) ||"/"||strip(rsub_count)|| ")" ; 
+index = &i; 
+varname = vlabel(&pred); 
+keep &pred numpct index varname &class.; 
+run; 
+
+proc sort data = routfreq&i; 
+by variable; 
+run; 
+ 
+proc transpose data=routfreq&i out=woutfreq&i; 
+by variable index; 
+id normal_vs_cancer;
+var numpct;
+run;
+
+
+data rstats&i; 
+set stats&i; 
+length p_value $8.; 
+/* if P_PCHI <= 0.05 then do; */
+/*p_value = put(round(P_PCHI,0.0001),6.4) || "*";  */
+if XP2_FISH < 0.0001 then p_value = "<0.0001" || "*"; 
+else p_value = put(XP2_FISH,8.4); 
+keep p_value index; 
+index = &i; 
+run; 
+
+data final&i; 
+length varname $20.;
+merge woutfreq&i rstats&i; 
+by index; 
+varname="&pred.";
+if not first.index then do; 
+varname = " "; 
+p_value = " "; 
+end; 
+run;
+
+%mend categ; 
+
+%categ (pred= Comorbidities, i=1);
+%categ (pred= stage, i=2);
+%categ (pred= type, i=3);
+
+ods rtf file= '---\output\association_10112024.rtf';
+proc print data=final1;run;
+proc print data=final2;run;
+proc print data=final3;run;
+ods rtf close;
+
+*END*
