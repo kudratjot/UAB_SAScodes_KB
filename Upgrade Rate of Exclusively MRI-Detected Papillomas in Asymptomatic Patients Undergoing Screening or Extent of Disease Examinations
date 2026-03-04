@@ -1,0 +1,368 @@
+/*sample-all patient with cancer*/
+proc import file="---\data\MRI Papilloma.CLEAN.xlsx"
+	out=MRI
+	DBMS=excel replace;
+	getnames=yes;
+	sheet="sheet1$A1:M118";
+run;
+
+data mri;set mri;
+Malignancy_in_the_same_breast=put(Malignancy_in_the_same_breast_1_,8.);
+UpgradeCancer___1__yes_2__no=put(Upgrade_Cancer___1__yes_2__no,8.);
+__mastectomy__2__lumpectomy__3=put(__mastectomy__2__lumpectomy__3__,8.);
+lesion__1__focus__2___mass__3=put(lesion__1__focus__2___mass__3___,8.);
+size_1___less_than_10mm__2_10mm=put(size_1___less_than_10mm__2_10mm_,8.);
+drop Malignancy_in_the_same_breast_1_ Upgrade_Cancer___1__yes_2__no __mastectomy__2__lumpectomy__3__ lesion__1__focus__2___mass__3___ size_1___less_than_10mm__2_10mm_;
+if strip(race)="white" then race="White";
+age=input(substr(strip(Age_At_Exam), 1,2), 5.0);
+run;
+
+proc contents data=mri;run;
+
+proc freq data=mri;tables _char_;run;
+
+proc freq data=mri;
+tables UpgradeCancer___1__yes_2__no;
+run;
+
+%let file=mri;
+%let pred=race;
+%let class=UpgradeCancer___1__yes_2__no;
+%let i=1;
+
+%macro categ(pred=,i=,); 
+
+*freq;
+proc freq data=&file.;
+table UpgradeCancer___1__yes_2__no/out=out;
+run;
+
+proc freq data = &file.; 
+tables &pred *  UpgradeCancer___1__yes_2__no/ missing chisq sparse outpct out = outfreq&i ; 
+output out = stats&i chisq fisher; 
+exact fisher;
+run; 
+
+proc sort data=outfreq&i; by &class.;run;
+
+data comb&i.;
+merge outfreq&i.(in=a) out(in=b keep=&class. count rename=(count=sub_count));
+by UpgradeCancer___1__yes_2__no;
+if a;
+run;
+
+
+data routfreq&i(rename = (&pred = variable)); 
+set comb&i; 
+length varname $20.; 
+rcount = put(count,8.); 
+rsub_count = put(sub_count,8.); 
+numpct = strip(round(pct_col,0.1))||"% ("||strip(rcount) ||"/"||strip(rsub_count)|| ")" ; 
+index = &i; 
+varname = vlabel(&pred); 
+keep &pred numpct index varname &class.; 
+run; 
+
+proc sort data = routfreq&i; 
+by variable; 
+run; 
+ 
+proc transpose data=routfreq&i out=woutfreq&i; 
+by variable index; 
+id UpgradeCancer___1__yes_2__no;
+var numpct;
+run;
+
+
+data rstats&i; 
+set stats&i; 
+length p_value $8.; 
+/* if P_PCHI <= 0.05 then do; */
+/*p_value = put(round(P_PCHI,0.0001),6.4) || "*";  */
+if XP2_FISH < 0.0001 then p_value = "<0.0001" || "*"; 
+else p_value = put(XP2_FISH,8.4); 
+keep p_value index; 
+index = &i; 
+run; 
+
+data final&i; 
+length varname $20.;
+merge woutfreq&i rstats&i; 
+by index; 
+varname="&pred.";
+if not first.index then do; 
+varname = " "; 
+p_value = " "; 
+end; 
+run;
+
+%mend categ; 
+
+%categ (pred= race, i=1);* no format;
+%categ (pred= Malignancy_in_the_same_breast, i=2);*noformat;
+%categ (pred= lesion__1__focus__2___mass__3, i=3);*noformat;
+%categ (pred= Reason_for_Exam, i=4);*noformat;
+%categ (pred= size_1___less_than_10mm__2_10mm, i=5);*noformat;
+%categ (pred= __mastectomy__2__lumpectomy__3, i=6);*noformat;
+
+ods excel file="-----output\All_Patients.xlsx";
+proc print data=final1;run;
+proc print data=final2;run;
+proc print data=final3;run;
+proc print data=final4;run;
+proc print data=final5;run;
+proc print data=final6;run;
+ods excel close;
+
+proc ttest data=mri; 
+class UpgradeCancer___1__yes_2__no ; 
+var age; 
+run; 
+
+/*sample- mri2 :Patients without atypia*
+*mri3:without atypia and without ca in same breast*/
+
+proc import file="----\data\ MRI Papilloma.BENIGN.CLEAN.xlsx"
+	out=MRI2
+	DBMS=excel replace;
+	getnames=yes;
+	sheet="sheet1$A1:M81";
+run;
+proc import file="----\data\Zamora MRI Papilloma.BENIGN.NO.IPSI.CA.CLEAN.xlsx" /*mri3:without atypia and without ca in same breast*/
+	out=MRI3
+	DBMS=excel replace;
+	getnames=yes;
+	sheet="sheet1$A1:M76";
+run;
+
+proc contents data=mri2;run;
+proc contents data=mri3;run;
+
+data mri2;set mri2;
+Malignancy_in_the_same_breast=put(Malignancy_in_the_same_breast_1_,8.);
+UpgradeCancer___1__yes_2__no=put(Upgrade_Cancer___1__yes_2__no,8.);
+__mastectomy__2__lumpectomy__3=put(__mastectomy__2__lumpectomy__3__,8.);
+lesion__1__focus__2___mass__3=put(lesion__1__focus__2___mass__3___,8.);
+size_1___less_than_10mm__2_10mm=put(size_1___less_than_10mm__2_10mm_,8.);
+drop Malignancy_in_the_same_breast_1_ Upgrade_Cancer___1__yes_2__no __mastectomy__2__lumpectomy__3__ lesion__1__focus__2___mass__3___ size_1___less_than_10mm__2_10mm_;
+if strip(race)="white" then race="White";
+age=input(substr(strip(Age_At_Exam), 1,2), 5.0);
+run;
+data mri3;set mri3;
+Malignancy_in_the_same_breast=put(Malignancy_in_the_same_breast_1_,8.);
+UpgradeCancer___1__yes_2__no=put(Upgrade_Cancer___1__yes_2__no,8.);
+__mastectomy__2__lumpectomy__3=put(__mastectomy__2__lumpectomy__3__,8.);
+lesion__1__focus__2___mass__3=put(lesion__1__focus__2___mass__3___,8.);
+size_1___less_than_10mm__2_10mm=put(size_1___less_than_10mm__2_10mm_,8.);
+drop Malignancy_in_the_same_breast_1_ Upgrade_Cancer___1__yes_2__no __mastectomy__2__lumpectomy__3__ lesion__1__focus__2___mass__3___ size_1___less_than_10mm__2_10mm_;
+if strip(race)="white" then race="White";
+age=input(substr(strip(Age_At_Exam), 1,2), 5.0);
+run;
+
+proc contents data=mri2;run;
+proc contents data=mri3;run;
+
+proc freq data=mri2;tables _char_;run;
+proc freq data=mri3;tables _char_;run;
+
+/***************************************************************/
+proc freq data=mri2;
+tables UpgradeCancer___1__yes_2__no;
+run;
+
+%let file=mri2;
+%let pred=race;
+%let class=UpgradeCancer___1__yes_2__no;
+%let i=1;
+
+%macro categ(pred=,i=,); 
+
+*freq;
+proc freq data=&file.;
+table UpgradeCancer___1__yes_2__no/out=out;
+run;
+
+proc freq data = &file.; 
+tables &pred *  UpgradeCancer___1__yes_2__no/ missing chisq sparse outpct out = outfreq&i ; 
+output out = stats&i chisq fisher; 
+exact fisher;
+run; 
+
+proc sort data=outfreq&i; by &class.;run;
+
+data comb&i.;
+merge outfreq&i.(in=a) out(in=b keep=&class. count rename=(count=sub_count));
+by UpgradeCancer___1__yes_2__no;
+if a;
+run;
+
+
+data routfreq&i(rename = (&pred = variable)); 
+set comb&i; 
+length varname $20.; 
+rcount = put(count,8.); 
+rsub_count = put(sub_count,8.); 
+numpct = strip(round(pct_col,0.1))||"% ("||strip(rcount) ||"/"||strip(rsub_count)|| ")" ; 
+index = &i; 
+varname = vlabel(&pred); 
+keep &pred numpct index varname &class.; 
+run; 
+
+proc sort data = routfreq&i; 
+by variable; 
+run; 
+ 
+proc transpose data=routfreq&i out=woutfreq&i; 
+by variable index; 
+id UpgradeCancer___1__yes_2__no;
+var numpct;
+run;
+
+
+data rstats&i; 
+set stats&i; 
+length p_value $8.; 
+/* if P_PCHI <= 0.05 then do; */
+/*p_value = put(round(P_PCHI,0.0001),6.4) || "*";  */
+if XP2_FISH < 0.0001 then p_value = "<0.0001" || "*"; 
+else p_value = put(XP2_FISH,8.4); 
+keep p_value index; 
+index = &i; 
+run; 
+
+data final&i; 
+length varname $20.;
+merge woutfreq&i rstats&i; 
+by index; 
+varname="&pred.";
+if not first.index then do; 
+varname = " "; 
+p_value = " "; 
+end; 
+run;
+
+
+%mend categ; 
+
+%categ (pred= race, i=1);* no format;
+%categ (pred= Malignancy_in_the_same_breast, i=2);*noformat;
+%categ (pred= lesion__1__focus__2___mass__3, i=3);*noformat;
+%categ (pred= Reason_for_Exam, i=4);*noformat;
+%categ (pred= size_1___less_than_10mm__2_10mm, i=5);*noformat;
+%categ (pred= __mastectomy__2__lumpectomy__3, i=6);*noformat;
+
+ods excel file="\\DOPM-FileServ1\SAS\Kudratjot\Dr.Li\Zamora_MRI_07292024\output\Patients_without_atypia.xlsx";
+proc print data=final1;run;
+proc print data=final2;run;
+proc print data=final3;run;
+proc print data=final4;run;
+proc print data=final5;run;
+proc print data=final6;run;
+ods excel close;
+
+proc ttest data=mri2; 
+class UpgradeCancer___1__yes_2__no ; 
+var age; 
+run;
+
+/***************************************************************************************************************/
+proc freq data=mri3;
+tables UpgradeCancer___1__yes_2__no;
+run;
+
+%let file=mri3;
+%let pred=race;
+%let class=UpgradeCancer___1__yes_2__no;
+%let i=1;
+
+%macro categ(pred=,i=,); 
+
+*freq;
+proc freq data=&file.;
+table UpgradeCancer___1__yes_2__no/out=out;
+run;
+
+proc freq data = &file.; 
+tables &pred *  UpgradeCancer___1__yes_2__no/ missing chisq sparse outpct out = outfreq&i ; 
+output out = stats&i chisq fisher; 
+exact fisher;
+run; 
+
+proc sort data=outfreq&i; by &class.;run;
+
+data comb&i.;
+merge outfreq&i.(in=a) out(in=b keep=&class. count rename=(count=sub_count));
+by UpgradeCancer___1__yes_2__no;
+if a;
+run;
+
+
+data routfreq&i(rename = (&pred = variable)); 
+set comb&i; 
+length varname $20.; 
+rcount = put(count,8.); 
+rsub_count = put(sub_count,8.); 
+numpct = strip(round(pct_col,0.1))||"% ("||strip(rcount) ||"/"||strip(rsub_count)|| ")" ; 
+index = &i; 
+varname = vlabel(&pred); 
+keep &pred numpct index varname &class.; 
+run; 
+
+proc sort data = routfreq&i; 
+by variable; 
+run; 
+ 
+proc transpose data=routfreq&i out=woutfreq&i; 
+by variable index; 
+id UpgradeCancer___1__yes_2__no;
+var numpct;
+run;
+
+
+data rstats&i; 
+set stats&i; 
+length p_value $8.; 
+/* if P_PCHI <= 0.05 then do; */
+/*p_value = put(round(P_PCHI,0.0001),6.4) || "*";  */
+if XP2_FISH < 0.0001 then p_value = "<0.0001" || "*"; 
+else p_value = put(XP2_FISH,8.4); 
+keep p_value index; 
+index = &i; 
+run; 
+
+data final&i; 
+length varname $20.;
+merge woutfreq&i rstats&i; 
+by index; 
+varname="&pred.";
+if not first.index then do; 
+varname = " "; 
+p_value = " "; 
+end; 
+run;
+
+
+%mend categ; 
+
+%categ (pred= race, i=1);* no format;
+%categ (pred= Malignancy_in_the_same_breast, i=2);*noformat;
+%categ (pred= lesion__1__focus__2___mass__3, i=3);*noformat;
+%categ (pred= Reason_for_Exam, i=4);*noformat;
+%categ (pred= size_1___less_than_10mm__2_10mm, i=5);*noformat;
+%categ (pred= __mastectomy__2__lumpectomy__3, i=6);*noformat;
+
+ods excel file="\\DOPM-FileServ1\SAS\Kudratjot\Dr.Li\Zamora_MRI_07292024\output\Pts_wo_atypia_&_IP_Cancer.xlsx";
+proc print data=final1;run;
+proc print data=final2;run;
+proc print data=final3;run;
+proc print data=final4;run;
+proc print data=final5;run;
+proc print data=final6;run;
+ods excel close;
+
+proc ttest data=mri3; 
+class UpgradeCancer___1__yes_2__no ; 
+var age; 
+run;
+
+/****************end********************/
