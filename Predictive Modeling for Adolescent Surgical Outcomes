@@ -1,0 +1,231 @@
+proc import out=tos
+    datafile="---\DATA\copy_tos.csv"
+    dbms=csv
+    replace;
+    getnames=YES;
+run;
+
+proc means data=tos2 n nmiss mean std min max maxdec=2; var _numeric_; run;
+
+proc freq data=tos;
+tables Reduction_of_Symptoms*Nerve_Blocks;
+run;
+
+proc means data=tos;
+var QuickDASH_Pre_Nerve_Block QuickDASH_Post_Nerve_Block;
+run;
+
+/*Cutoff Scores:
+These thresholds are generally used for subgroups:
+VAS: 0-3 = mild, 4-6 = moderate, 7-10 = severe
+QuickDASH: 0-20 = mild, 21-40 = moderate, 41-100 = severe
+CBSQ: no commonly used threshold cutoff available since it is less standardized*/
+
+data tos2;set tos;
+length pre_vas $10. Post_vas $10.  pre_QuickDASH $10.  post_QuickDASH $10. VAS_test $12. QuickDASH_test $12. CBSQ_test $12. Any2Scale_improve $12.;
+if name='VG' then do;
+VAS_Pre_Nerve_Block = 3;
+QuickDASH_Pre_Nerve_Block = 48.6;
+CBSQ_Pre_Nerve_Block = 68.3;
+end;
+
+if VAS_Pre_Nerve_Block in(0,1,2,3) then pre_vas='Mild';
+else if VAS_Pre_Nerve_Block in(4,5,6) then pre_vas='Moderate';
+else if VAS_Pre_Nerve_Block in(7,8,9,10) then pre_vas='Severe';
+if VAS_Post_Nerve_Block in(0,1,2,3) then Post_vas='Mild';
+else if VAS_Post_Nerve_Block in(4,5,6) then Post_vas='Moderate';
+else if VAS_Post_Nerve_Block in(7,8,9,10) then Post_vas='Severe';
+
+if QuickDASH_Pre_Nerve_Block <= 20 then pre_QuickDASH='Mild';
+else if 21<= QuickDASH_Pre_Nerve_Block <=40 then pre_QuickDASH='Moderate';
+else if QuickDASH_Pre_Nerve_Block >40 then pre_QuickDASH='Severe';
+if QuickDASH_Post_Nerve_Block <= 20 then post_QuickDASH='Mild';
+else if 21<=QuickDASH_Post_Nerve_Block <=40 then post_QuickDASH='Moderate';
+else if QuickDASH_Post_Nerve_Block >40 then post_QuickDASH='Severe';
+
+if VAS_Pre_Nerve_Block>=VAS_Post_Nerve_Block then VAS_test =1;
+else VAS_test =0;
+if QuickDASH_Pre_Nerve_Block>=QuickDASH_Post_Nerve_Block then QuickDASH_test =1;
+else QuickDASH_test =0;
+if CBSQ_Pre_Nerve_Block>=CBSQ_Post_Nerve_Block then CBSQ_test =1;
+else CBSQ_test =0;
+
+num_improve=sum(VAS_test,QuickDASH_test,CBSQ_test );
+
+if num_improve>=2 then Any2Scale_improve='yes';
+else Any2Scale_improve='no';
+
+if Any2Scale_improve='yes' then improvement=1;
+else if Any2Scale_improve='no' then improvement=0;
+
+VAS_diff = VAS_Post_Nerve_Block - VAS_Pre_Nerve_Block;
+QuickDASH_diff = QuickDASH_Post_Nerve_Block- QuickDASH_Pre_Nerve_Block;
+CBSQ_diff = CBSQ_Post_Nerve_Block-  CBSQ_Pre_Nerve_Block;
+
+if VAS_Pre_Nerve_Block>0 then vas_pct=(VAS_diff/VAS_Pre_Nerve_Block)*100;
+else if (VAS_Pre_Nerve_Block=0) and (VAS_Post_Nerve_Block>0) then vas_pct= -100;
+else if (VAS_Pre_Nerve_Block=0) and (VAS_Post_Nerve_Block=0) then vas_pct= 0;
+
+QuickDASH_pct=(QuickDASH_diff/QuickDASH_Pre_Nerve_Block)*100;
+CBSQ_pct=(CBSQ_diff/CBSQ_Pre_Nerve_Block)*100;
+
+if Reduction_of_Symptoms='yes' then Reduction_of_Symptoms_n=1;
+else if Reduction_of_Symptoms='no' then Reduction_of_Symptoms_n=0;
+
+if Resolution_of_Symptoms_after_sur=' ' then Resolution_of_Symptoms_aft_sur_n='Missing';
+else Resolution_of_Symptoms_aft_sur_n=Resolution_of_Symptoms_after_sur;
+
+run;
+
+proc FREQ data=tos2;TABLES  Resolution_of_Symptoms_aft_sur_n ;
+run;
+
+proc sgplot data=tos2;
+vbar Any2Scale_improve /group=Resolution_of_Symptoms_aft_sur_n groupdisplay=cluster;
+xaxis  label='Responder status(Imptoved at any 2 scale=yes else no)';
+yaxis  label='Number of Responder';
+run;
+
+/********************************/
+/*table1 - descriptives*/
+proc means data=tos2 ;
+var age 
+VAS_Pre_Nerve_Block VAS_Post_Nerve_Block 
+QuickDASH_Pre_Nerve_Block QuickDASH_Post_Nerve_Block
+QuickDASH_work_Pre_Nerve_Block QuickDASH_work_Post_Nerve_Block
+QuickDASH_sports_Pre_Nerve_Block QuickDASH_sports_Post_Nerve_Bloc 
+CBSQ_Pre_Nerve_Block CBSQ_Post_Nerve_Block
+VAS_diff QuickDASH_diff CBSQ_diff
+pre_post_diff
+surg_post_diff 
+folloup_from_surg 
+total_followup_pre;
+output out=TOS_mean;
+class Any2Scale_improve;
+run;
+data TOS_mean;set TOS_mean;
+if Any2Scale_improve= ' ' then Any2Scale_improve='All';
+run;
+proc sort data=TOS_mean; by _STAT_;run;
+proc transpose data=TOS_mean out=ttos_mean;
+id Any2Scale_improve  _STAT_;
+var age 
+VAS_Pre_Nerve_Block VAS_Post_Nerve_Block 
+QuickDASH_Pre_Nerve_Block QuickDASH_Post_Nerve_Block
+QuickDASH_work_Pre_Nerve_Block QuickDASH_work_Post_Nerve_Block
+QuickDASH_sports_Pre_Nerve_Block QuickDASH_sports_Post_Nerve_Bloc 
+CBSQ_Pre_Nerve_Block CBSQ_Post_Nerve_Block
+VAS_diff QuickDASH_diff CBSQ_diff
+pre_post_diff
+surg_post_diff 
+folloup_from_surg 
+total_followup_pre;
+run;
+data ttos_mean2;set ttos_mean;
+drop AllMEAN AllSTD YesMEAN YesSTD NoMEAN NoSTD AllMIN AllMAX YesMIN YesMAX NoMIN NoMAX;
+all_Mean_std = catx(' ', put(AllMEAN, 8.2), '(' || strip(put(AllSTD, 8.2)) || ')');
+all_range = catx('-', put(AllMIN,8.2), put(AllMAX,8.2));
+Yes_Mean_std = catx(' ', put(YesMEAN, 8.2), '(' || strip(put(YesSTD, 8.2)) || ')');
+Yes_range = catx('-', put(YesMIN,8.2), put(YesMAX,8.2));
+No_Mean_std = catx(' ', put(NoMEAN, 8.2), '(' || strip(put(NoSTD, 8.2)) || ')');
+No_range = catx('-', put(NoMIN,8.2), put(NoMAX,8.2));
+run;
+ods excel file='\\DOPM-FileServ1\SAS\Kudratjot\Dr.Li\Heng-Raja_TOS_05012025\outputs\tos_mean_0516.xlsx';
+proc print data=ttos_mean2;run;
+ods excel close;
+
+proc freq data=tos2 ;
+tables (Sex 
+pre_vas Post_vas pre_QuickDASH post_QuickDASH 
+VAS_test QuickDASH_test CBSQ_test 
+Reduction_of_Symptoms Resolution_of_Symptoms_after_sur);*by Any2Scale_improve;
+run;
+
+
+/******************/
+/*Paired comp*/
+proc sort data=tos2; by Any2Scale_improve;run;
+
+proc means data=tos2;
+var vas_pct QuickDASH_pct CBSQ_pct;
+run;
+
+proc univariate data=tos2;
+var vas_pct QuickDASH_pct CBSQ_pct;
+ods select TestsForLocation;
+run;
+
+/* === 5. Effect Size Estimation === */
+proc means data=tos2 mean std median ;
+var VAS_diff QuickDASH_diff CBSQ_diff;
+output out=cohen;
+run;
+proc transpose data=cohen out=tcohen;
+id _STAT_;
+var VAS_diff QuickDASH_diff CBSQ_diff;
+run;
+data tcohen;set tcohen;
+CohenD=MEAN/STD;
+run; 
+proc print data=tcohen;run;
+/*0.2=small effect , 0.5=medium , 0.8+=large*/
+
+/* === 6. Spearman Correlation Between Change Scores === */
+proc corr data=tos2 spearman;
+var VAS_diff QuickDASH_diff CBSQ_diff;
+run;
+/*The coefficient ranges from -1 to +1, with positive values indicating a positive monotonic relationship 
+and negative values indicating a negative monotonic relationship. Values closer to 1 or -1 represent stronger 
+relationships, while values closer to 0 indicate weaker relationships*/
+/*p-value may not reach 0.05 due to small sample size, but rho can tell us about the relation*/
+
+/* === 7. Responder Frequency and Comparison === */
+proc freq data=tos2;
+tables Any2Scale_improve;
+run;
+
+proc means data =tos2 mean std median min max maxdec=2;
+var 
+VAS_Pre_Nerve_Block VAS_Post_Nerve_Block 
+QuickDASH_Pre_Nerve_Block QuickDASH_Post_Nerve_Block
+CBSQ_Pre_Nerve_Block CBSQ_Post_Nerve_Block;
+run;
+proc univariate data=tos2;
+var VAS_diff QuickDASH_diff CBSQ_diff;
+ods select TestsForLocation;
+run;
+proc npar1way data=tos2 wilcoxon;
+class Any2Scale_improve;
+var VAS_diff QuickDASH_diff CBSQ_diff;
+run;
+
+/***********************************/
+proc logistic data=tos2 plots=roc;
+model Reduction_of_Symptoms_n(event='1')= VAS_diff QuickDASH_diff CBSQ_diff;
+roc VAS_diff ;
+ROC QuickDASH_diff ;
+ROC CBSQ_diff  ;
+ROCCONTRAST;
+run;
+
+/**********************/
+
+proc logistic data=tos2 ;
+model Reduction_of_Symptoms_n(event='1')= VAS_diff ;
+roc VAS_diff ;
+score data=tos2 out=pred ;
+run;
+
+proc logistic data=tos2 plots=roc;
+model Reduction_of_Symptoms_n(event='1')= QuickDASH_diff ;
+roc QuickDASH_diff ;
+run;
+
+/**************/
+
+
+proc freq data=tos2;
+tables VAS_diff*QuickDASH_diff*CBSQ_diff*pre_vas*Post_vas*pre_QuickDASH*post_QuickDASH*Any2Scale_improve*Reduction_of_Symptoms_n*Resolution_of_Symptoms_aft_sur_n/list;
+run;
+
+ 
