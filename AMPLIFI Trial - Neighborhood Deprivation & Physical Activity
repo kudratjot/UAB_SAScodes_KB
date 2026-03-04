@@ -1,0 +1,552 @@
+******************************************************************************
+* PROJECT:   AMPLIFI Trial - Neighborhood Deprivation & Physical Activity
+* STUDY:     AMPLIFI (AiM, PLan and act on LIFestYles)
+*            NCI-funded multi-center randomized clinical trial
+*            UAB O'Neal Comprehensive Cancer Center
+*
+* OBJECTIVE: Examine associations between neighborhood-level social 
+*            determinants (ADI, SVI, Walkability) and physical activity 
+*            behaviors among 603 cancer survivors aged 50+
+*
+* OUTCOMES:  1. Weekly minutes of MVPA (continuous)
+*            2. Meeting 150+ min/week MVPA guideline (binary)
+*            3. Weekly sedentary minutes (continuous)
+*
+* EXPOSURES: Area Deprivation Index (ADI) quintiles
+*            Social Vulnerability Index (SVI) quartiles
+*            National Walkability Index categories
+*
+* METHODS:   - Descriptive statistics & cross-tabulations (Table 1)
+*            - Unadjusted linear regression (PROC REG) & logistic regression
+*            - Adjusted GLM & logistic regression controlling for:
+*              age, gender, race/ethnicity, education, marital status,
+*              employment, income
+*            - Fisher's exact tests for categorical comparisons
+*            - ANOVA for continuous variable comparisons across ADI groups
+*
+* ANALYST:   Kudratjot Brar, Biostatistician
+* SOFTWARE:  SAS 9.4
+* DATE:      December 2024 - April 2025
+* NOTE:      File paths generalized for public sharing. 
+*            All participant data excluded from this script.
+******************************************************************************/
+
+
+/*===========================================================================
+  SECTION 1: DATA PREPARATION
+  - Import master analytic dataset (N=603 cancer survivors)
+  - Merge cancer staging variable
+  - Derive analytic variables for neighborhood indices and demographics
+===========================================================================*/
+
+/* Import master dataset */
+libname AMPLIFY '<filepath>/master_database';
+data master;
+    set amplify.N603_master_amplify;
+run;
+
+/* Import cancer staging data and merge */
+proc import out=work.stage 
+    datafile="<filepath>/amplify_staging_data.csv" 
+    dbms=csv replace;
+    getnames=yes;
+    datarow=2; 
+run;
+
+data stage2;
+    set stage; 
+    keep record_id final_stage;
+run;
+
+/* Derive analytic variables */
+data master2;
+    set master;
+
+    /* --- ADI Quintile classification (1=least deprived, 5=most deprived) --- */
+    if      BL_ADIQ1 = '1' then adi_n = 1;
+    else if BL_ADIQ2 = '1' then adi_n = 2;
+    else if BL_ADIQ3 = '1' then adi_n = 3;
+    else if BL_ADIQ4 = '1' then adi_n = 4;
+    else if BL_ADIQ5 = '1' then adi_n = 5;
+    else                         adi_n = .;
+
+    /* --- SVI Quartile classification (based on univariate distribution) --- */
+    if bl_rpl_themes ^= . then do;
+        if      bl_rpl_themes <= 0.17130 then bl_rpl_cat = '1';
+        else if bl_rpl_themes <= 0.39355 then bl_rpl_cat = '2';
+        else if bl_rpl_themes <= 0.64970 then bl_rpl_cat = '3';
+        else if bl_rpl_themes <= 0.98270 then bl_rpl_cat = '4';
+        else                                  bl_rpl_cat = '.';
+    end;
+
+    /* --- Race/Ethnicity (combined) --- */
+    length bl_race_eth $20.;
+    if (BL_race_new = 'Black') and (BL_ethnic_new = 'Non-Hispanic/Non-Latino') 
+        then bl_race_eth = 'Non-Hispanic Black';
+    else if (BL_race_new = 'White') and (BL_ethnic_new = 'Non-Hispanic/Non-Latino') 
+        then bl_race_eth = 'Non-Hispanic White';
+    else bl_race_eth = 'Others';
+
+    /* --- Employment (collapsed) --- */
+    length bl_employement_n $12.;
+    if BL_p_employ in ('Employed' 'Farmer')       then bl_employement_n = 'Employed';
+    else if BL_p_employ in ('Other (specify)')     then bl_employement_n = 'Other';
+    else                                                bl_employement_n = 'Unemployed';
+
+    /* --- Marital Status (collapsed) --- */
+    length bl_marital_n $25.;
+    if BL_p_marital in ('Married' 'Not married but live with significant other') 
+        then bl_marital_n = 'Living with a Partner';
+    else if BL_p_marital in ('Divorced or Separated' 'Refused' 'Single (never married)' 'Widowed') 
+        then bl_marital_n = 'Living Alone';
+
+    /* --- Insurance (collapsed) --- */
+    length BL_insurance_n $20.;
+    if BL_p_insur_1 in ('Medicai' 'Medicar')  then BL_insurance_n = 'Public Insurance';
+    else if BL_p_insur_1 in ('Private')        then BL_insurance_n = 'Private Insurance';
+    else if BL_p_insur_1 in ('Missing' 'Other') then BL_insurance_n = 'Others';
+
+    /* --- Income (collapsed) --- */
+    length BL_income_n $20.;
+    if BL_p_income_new in ('$25,000 to less t' '$50,000 to less t' 'Less than $25,000') 
+        then BL_income_n = 'Less than $75,000';
+    else if BL_p_income_new in ('$75,000 or more') 
+        then BL_income_n = 'More than $75,000';
+    else BL_income_n = 'Refused';
+run;
+
+/* Merge staging data */
+data master2;
+    merge master2(in=a) stage2(in=b);
+    by record_id;
+    if a;
+run;
+
+
+/*===========================================================================
+  SECTION 2: TABLE 1 - DEMOGRAPHIC CHARACTERISTICS BY ADI QUINTILE
+  - Reusable macro for categorical variable cross-tabulation
+  - Produces column percentages with Fisher's exact p-values
+===========================================================================*/
+
+%let file = master2;
+%let class = adi_n;
+
+%macro categ_by_group(pred=, i=); 
+    /* Get subgroup denominators */
+    proc freq data=&file.;
+        table &class. / out=out;
+    run;
+
+    /* Cross-tabulation with Fisher's exact test */
+    proc freq data=&file.; 
+        tables &pred. * &class. / missing chisq sparse outpct out=outfreq&i.; 
+        output out=stats&i. chisq fisher; 
+    run; 
+
+    proc sort data=outfreq&i.; by &class.; run;
+
+    /* Merge denominators for n/N format */
+    data comb&i.;
+        merge outfreq&i.(in=a) out(in=b keep=&class. count rename=(count=sub_count));
+        by &class.;
+        if a;
+    run;
+
+    /* Format as: pct% (n/N) */
+    data routfreq&i.(rename=(&pred. = variable)); 
+        set comb&i.; 
+        length varname $20.; 
+        numpct = strip(round(pct_col, 0.1)) || "% (" || strip(put(count, 8.)) 
+                 || "/" || strip(put(sub_count, 8.)) || ")"; 
+        index = &i.; 
+        varname = vlabel(&pred.); 
+        keep &pred. numpct index varname &class.; 
+    run; 
+
+    proc sort data=routfreq&i.; by variable; run; 
+
+    /* Transpose to wide format (one column per ADI quintile) */
+    proc transpose data=routfreq&i. out=woutfreq&i.; 
+        by variable index; 
+        id &class.;
+        var numpct;
+    run;
+
+    /* Extract Fisher's exact p-value */
+    data rstats&i.; 
+        set stats&i.; 
+        length p_value $8.; 
+        if XP2_FISH < 0.0001 then p_value = "<0.0001*"; 
+        else p_value = put(XP2_FISH, 8.4); 
+        keep p_value index; 
+        index = &i.; 
+    run; 
+
+    /* Combine frequencies and p-values */
+    data final&i.; 
+        length varname $20.;
+        merge woutfreq&i. rstats&i.; 
+        by index; 
+        varname = "&pred.";
+        if not first.index then do; 
+            varname = " "; 
+            p_value = " "; 
+        end; 
+    run;
+%mend categ_by_group;
+
+/* Execute for all demographic variables */
+%categ_by_group(pred=bl_race_eth,       i=1)
+%categ_by_group(pred=bl_employement_n,  i=2) 
+%categ_by_group(pred=bl_marital_n,      i=3)
+%categ_by_group(pred=BL_insurance_n,    i=4)
+%categ_by_group(pred=BL_income_n,       i=5)
+
+data table1_categorical;
+    set final1 - final5;
+run;
+
+
+/*===========================================================================
+  SECTION 3: TABLE 1 - CONTINUOUS VARIABLES BY ADI QUINTILE
+  - Age, time since diagnosis, functional limitations
+  - Summary statistics with one-way ANOVA
+===========================================================================*/
+
+proc univariate data=master2 plots normal;
+    var BL_age_new BL_Time_Since_DX BL_Func_Limit;
+run;
+
+proc means data=master2;
+    class adi_n;
+    var BL_age_new BL_Time_Since_DX BL_Func_Limit;
+    output out=summary;
+run;
+
+data summary;
+    set summary;
+    if adi_n = . then adi_label = 'Overall';
+    else adi_label = put(adi_n, 1.);
+    drop _TYPE_ _FREQ_;
+run;
+
+/* ANOVA: test for differences across ADI quintiles */
+proc anova data=master2; class adi_n; model BL_age_new       = adi_n; run;
+proc anova data=master2; class adi_n; model BL_Time_Since_DX = adi_n; run;
+proc anova data=master2; class adi_n; model BL_Func_Limit    = adi_n; run;
+
+
+/*===========================================================================
+  SECTION 4: PHYSICAL ACTIVITY OUTCOMES BY NEIGHBORHOOD INDEX
+  - Descriptive: MVPA minutes & sedentary minutes by ADI/SVI/Walkability
+  - Formatted as Mean (SD) with range
+===========================================================================*/
+
+/* By ADI quintile */
+proc means data=master2;
+    class adi_n;
+    var Adj_BL_MVPA_weekly_minutes_m0 bl_Wklysedentary;
+    output out=summary_adi;
+run;
+
+proc transpose data=summary_adi(drop=_TYPE_ _FREQ_) out=tsum_adi;
+    by adi_n;
+    id _STAT_;
+    var Adj_BL_MVPA_weekly_minutes_m0 bl_Wklysedentary; 
+run;
+
+data tsum_adi;
+    set tsum_adi;
+    mean_sd = catx(' ', put(mean, 8.2), '(' || strip(put(std, 8.2)) || ')');
+    range   = catx('-', put(min, 8.2), put(max, 8.2));
+run;
+
+/* By SVI quartile */
+proc means data=master2;
+    class bl_rpl_cat;
+    var Adj_BL_MVPA_weekly_minutes_m0 bl_Wklysedentary;
+    output out=summary_svi;
+run;
+
+proc transpose data=summary_svi(drop=_TYPE_ _FREQ_) out=tsum_svi;
+    by bl_rpl_cat;
+    id _STAT_;
+    var Adj_BL_MVPA_weekly_minutes_m0 bl_Wklysedentary; 
+run;
+
+data tsum_svi;
+    set tsum_svi;
+    mean_sd = catx(' ', put(mean, 8.2), '(' || strip(put(std, 8.2)) || ')');
+    range   = catx('-', put(min, 8.2), put(max, 8.2));
+run;
+
+/* By Walkability Index */
+proc means data=master2;
+    class bl_walk_ind_cat;
+    var Adj_BL_MVPA_weekly_minutes_m0 bl_Wklysedentary;
+    output out=summary_walk;
+run;
+
+proc transpose data=summary_walk(drop=_TYPE_ _FREQ_) out=tsum_walk;
+    by bl_walk_ind_cat;
+    id _STAT_;
+    var Adj_BL_MVPA_weekly_minutes_m0 bl_Wklysedentary; 
+run;
+
+data tsum_walk;
+    set tsum_walk;
+    mean_sd = catx(' ', put(mean, 8.2), '(' || strip(put(std, 8.2)) || ')');
+    range   = catx('-', put(min, 8.2), put(max, 8.2));
+run;
+
+
+/*===========================================================================
+  SECTION 5: UNADJUSTED MODELS
+  - Linear regression: continuous MVPA & sedentary minutes
+  - Logistic regression: meeting 150+ min/week MVPA guideline
+  - Exposures tested as both continuous and categorical
+===========================================================================*/
+
+/*--- 5a. Linear: MVPA minutes (continuous exposure) ---*/
+proc reg data=master2; model Adj_BL_MVPA_weekly_minutes_m0 = BL_adi_natrank2020; run; quit;
+proc reg data=master2; model Adj_BL_MVPA_weekly_minutes_m0 = BL_rpl_themes;      run; quit;
+proc reg data=master2; model Adj_BL_MVPA_weekly_minutes_m0 = bl_natwalkind;      run; quit;
+
+/*--- 5b. Linear: Sedentary minutes (continuous exposure) ---*/
+proc reg data=master2; model bl_Wklysedentary = BL_adi_natrank2020; run; quit;
+proc reg data=master2; model bl_Wklysedentary = BL_rpl_themes;      run; quit;
+proc reg data=master2; model bl_Wklysedentary = bl_natwalkind;      run; quit;
+
+/*--- 5c. GLM: MVPA & sedentary by categorical exposure ---*/
+%macro unadj_glm(outcome=, exposure=, paramnum=);
+    ods output parameterestimates = param&paramnum.;
+    proc glm data=master2;
+        class &exposure.;
+        model &outcome. = &exposure. / solution;
+    run; quit;
+    ods output close;
+%mend;
+
+%unadj_glm(outcome=Adj_BL_MVPA_weekly_minutes_m0, exposure=adi_n,          paramnum=1)
+%unadj_glm(outcome=bl_Wklysedentary,              exposure=adi_n,          paramnum=2)
+%unadj_glm(outcome=Adj_BL_MVPA_weekly_minutes_m0, exposure=bl_rpl_cat,     paramnum=3)
+%unadj_glm(outcome=bl_Wklysedentary,              exposure=bl_rpl_cat,     paramnum=4)
+%unadj_glm(outcome=Adj_BL_MVPA_weekly_minutes_m0, exposure=bl_walk_ind_cat,paramnum=5)
+%unadj_glm(outcome=bl_Wklysedentary,              exposure=bl_walk_ind_cat,paramnum=6)
+
+data unadjusted_glm_params;
+    set param1 - param6;
+run;
+
+/*--- 5d. Logistic: 150+ MVPA guideline (categorical exposure) ---*/
+ods output CLoddsWald=or1;
+proc logistic data=master2;
+    class adi_n(ref='1');
+    model Adj_BL_MVPA_weekly_150_m0(event='1') = adi_n / clodds=wald;
+run; ods output close;
+
+ods output CLoddsWald=or2;
+proc logistic data=master2;
+    class bl_rpl_cat(ref='1');
+    model Adj_BL_MVPA_weekly_150_m0(event='1') = bl_rpl_cat / clodds=wald;
+run; ods output close;
+
+ods output CLoddsWald=or3;
+proc logistic data=master2;
+    class bl_walk_ind_cat(ref='1');
+    model Adj_BL_MVPA_weekly_150_m0(event='1') = bl_walk_ind_cat / clodds=wald;
+run; ods output close;
+
+data unadjusted_logistic_or;
+    set or1 - or3;
+run;
+
+
+/*===========================================================================
+  SECTION 6: ADJUSTED MODELS
+  Covariates: age, gender, race/ethnicity, education, marital status,
+              employment, income
+===========================================================================*/
+
+%let covars_class = BL_gender_new bl_race_eth BL_education_new 
+                    bl_marital_n bl_employement_n BL_income_n;
+%let covars_model = BL_age_new BL_gender_new bl_race_eth BL_education_new 
+                    bl_marital_n bl_employement_n BL_income_n;
+
+/*--- 6a. Adjusted GLM: MVPA minutes ---*/
+ods output parameterestimates=adj_mvpa_adi;
+proc glm data=master2;
+    class &covars_class.;
+    model Adj_BL_MVPA_weekly_minutes_m0 = BL_adi_natrank2020 &covars_model. / solution;
+run; quit;
+ods output close;
+
+ods output parameterestimates=adj_mvpa_svi;
+proc glm data=master2;
+    class &covars_class.;
+    model Adj_BL_MVPA_weekly_minutes_m0 = BL_rpl_themes &covars_model. / solution;
+run; quit;
+ods output close;
+
+ods output parameterestimates=adj_mvpa_walk;
+proc glm data=master2;
+    class &covars_class.;
+    model Adj_BL_MVPA_weekly_minutes_m0 = bl_natwalkind &covars_model. / solution;
+run; quit;
+ods output close;
+
+data adjusted_mvpa_minutes;
+    set adj_mvpa_adi adj_mvpa_svi adj_mvpa_walk;
+run;
+
+/*--- 6b. Adjusted GLM: Sedentary minutes ---*/
+ods output parameterestimates=adj_sed_adi;
+proc glm data=master2;
+    class &covars_class.;
+    model bl_Wklysedentary = BL_adi_natrank2020 &covars_model. / solution;
+run; quit;
+ods output close;
+
+ods output parameterestimates=adj_sed_svi;
+proc glm data=master2;
+    class &covars_class.;
+    model bl_Wklysedentary = BL_rpl_themes &covars_model. / solution;
+run; quit;
+ods output close;
+
+ods output parameterestimates=adj_sed_walk;
+proc glm data=master2;
+    class &covars_class.;
+    model bl_Wklysedentary = bl_natwalkind &covars_model. / solution;
+run; quit;
+ods output close;
+
+data adjusted_sedentary_minutes;
+    set adj_sed_adi adj_sed_svi adj_sed_walk;
+run;
+
+/*--- 6c. Adjusted Logistic: 150+ min MVPA guideline ---*/
+ods output CLoddsWald=adj_or_adi ParameterEstimates=adj_pv_adi;
+proc logistic data=master2;
+    class Adj_BL_MVPA_weekly_150_m0 &covars_class. / param=ref;
+    model Adj_BL_MVPA_weekly_150_m0(event='1') = BL_adi_natrank2020 &covars_model. / clodds=wald;
+run;
+ods output close;
+
+ods output CLoddsWald=adj_or_svi ParameterEstimates=adj_pv_svi;
+proc logistic data=master2;
+    class Adj_BL_MVPA_weekly_150_m0 &covars_class. / param=ref;
+    model Adj_BL_MVPA_weekly_150_m0(event='1') = BL_rpl_themes &covars_model. / clodds=wald;
+run;
+ods output close;
+
+ods output CLoddsWald=adj_or_walk ParameterEstimates=adj_pv_walk;
+proc logistic data=master2;
+    class Adj_BL_MVPA_weekly_150_m0 &covars_class. / param=ref;
+    model Adj_BL_MVPA_weekly_150_m0(event='1') = bl_natwalkind &covars_model. / clodds=wald;
+run;
+ods output close;
+
+data adjusted_150mvpa_or;
+    set adj_or_adi adj_or_svi adj_or_walk;
+run;
+
+data adjusted_150mvpa_pvalues;
+    set adj_pv_adi adj_pv_svi adj_pv_walk;
+run;
+
+
+/*===========================================================================
+  SECTION 7: ADJUSTED MODELS WITH CATEGORICAL EXPOSURES
+  Same covariate set; exposures as ADI quintile, SVI quartile, 
+  and Walkability category
+===========================================================================*/
+
+/*--- 7a. MVPA minutes by categorical ADI/SVI/Walk ---*/
+ods output parameterestimates=adj_cat_mvpa1;
+proc glm data=master2;
+    class &covars_class. adi_n;
+    model Adj_BL_MVPA_weekly_minutes_m0 = adi_n &covars_model. / solution;
+run; quit; ods output close;
+
+ods output parameterestimates=adj_cat_mvpa2;
+proc glm data=master2;
+    class &covars_class. bl_rpl_cat;
+    model Adj_BL_MVPA_weekly_minutes_m0 = bl_rpl_cat &covars_model. / solution;
+run; quit; ods output close;
+
+ods output parameterestimates=adj_cat_mvpa3;
+proc glm data=master2;
+    class &covars_class. bl_walk_ind_cat;
+    model Adj_BL_MVPA_weekly_minutes_m0 = bl_walk_ind_cat &covars_model. / solution;
+run; quit; ods output close;
+
+data adjusted_cat_mvpa_minutes;
+    set adj_cat_mvpa1 adj_cat_mvpa2 adj_cat_mvpa3;
+run;
+
+/*--- 7b. Sedentary minutes by categorical ADI/SVI/Walk ---*/
+ods output parameterestimates=adj_cat_sed1;
+proc glm data=master2;
+    class &covars_class. adi_n;
+    model bl_Wklysedentary = adi_n &covars_model. / solution;
+run; quit; ods output close;
+
+ods output parameterestimates=adj_cat_sed2;
+proc glm data=master2;
+    class &covars_class. bl_rpl_cat;
+    model bl_Wklysedentary = bl_rpl_cat &covars_model. / solution;
+run; quit; ods output close;
+
+ods output parameterestimates=adj_cat_sed3;
+proc glm data=master2;
+    class &covars_class. bl_walk_ind_cat;
+    model bl_Wklysedentary = bl_walk_ind_cat &covars_model. / solution;
+run; quit; ods output close;
+
+data adjusted_cat_sedentary;
+    set adj_cat_sed1 adj_cat_sed2 adj_cat_sed3;
+run;
+
+/*--- 7c. 150+ MVPA by categorical ADI/SVI/Walk ---*/
+ods output CLoddsWald=adj_cat_or1 ParameterEstimates=adj_cat_pv1;
+proc logistic data=master2;
+    class Adj_BL_MVPA_weekly_150_m0 &covars_class. adi_n / param=ref;
+    model Adj_BL_MVPA_weekly_150_m0(event='1') = adi_n &covars_model. / clodds=wald;
+run; ods output close;
+
+ods output CLoddsWald=adj_cat_or2 ParameterEstimates=adj_cat_pv2;
+proc logistic data=master2;
+    class Adj_BL_MVPA_weekly_150_m0 &covars_class. bl_rpl_cat / param=ref;
+    model Adj_BL_MVPA_weekly_150_m0(event='1') = bl_rpl_cat &covars_model. / clodds=wald;
+run; ods output close;
+
+ods output CLoddsWald=adj_cat_or3 ParameterEstimates=adj_cat_pv3;
+proc logistic data=master2;
+    class Adj_BL_MVPA_weekly_150_m0 &covars_class. bl_walk_ind_cat / param=ref;
+    model Adj_BL_MVPA_weekly_150_m0(event='1') = bl_walk_ind_cat &covars_model. / clodds=wald;
+run; ods output close;
+
+data adjusted_cat_150mvpa_or;
+    set adj_cat_or1 adj_cat_or2 adj_cat_or3;
+run;
+
+data adjusted_cat_150mvpa_pvalues;
+    set adj_cat_pv1 adj_cat_pv2 adj_cat_pv3;
+run;
+
+/******************************************************************************
+* END OF ANALYSIS
+* 
+* Summary of outputs generated:
+*   - table1_categorical:          Demographics by ADI quintile (Fisher's exact)
+*   - summary (Section 3):         Continuous vars by ADI (with ANOVA)
+*   - tsum_adi/svi/walk:           MVPA & sedentary descriptives by each index
+*   - unadjusted_glm_params:       Unadjusted GLM parameter estimates
+*   - unadjusted_logistic_or:      Unadjusted odds ratios for 150+ MVPA
+*   - adjusted_mvpa_minutes:        Adjusted GLM for MVPA (continuous exposure)
+*   - adjusted_sedentary_minutes:   Adjusted GLM for sedentary (continuous exposure)
+*   - adjusted_150mvpa_or/pvalues:  Adjusted logistic for 150+ MVPA (continuous)
+*   - adjusted_cat_*:               All adjusted models with categorical exposures
+***********************************************
