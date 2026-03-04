@@ -1,0 +1,287 @@
+libname aa_0321 xlsx '------\data\copy_TIPS_07252025.xlsx';
+libname tips2 '----\data';
+
+data ascites; set tips2.ascites;run;
+data EVinc; set tips2.evincidence;where Patient_ID^=.; run;
+data hesymptoms; set tips2.hesymptoms;run;
+data hydrothorax; set tips2.hydrothorax;
+if Patient_ID=2 then do;
+Last_HH_status='n';
+Last_HH_Frequency=0;
+Last_HH_Mean_volume=0;
+end;
+run;
+
+data tips;
+merge main ascites EVinc hesymptoms hydrothorax;
+by patient_id;
+run;
+
+proc print  data=tips;
+where Patient_ID=2; 
+run;
+
+data tips2; set tips;
+
+if _1_year_patency in('Yes' 'yes')then _1_year_patency='Yes';
+if Details_of_last_f_u in('died' 'died (last record available with labs 6/2/2023)') then Details_of_last_f_u ='Died';
+if HE_Pre_revison in('HE (controlled)' 'HE(controlled)') then HE_Pre_revison ='HE(controlled)';
+if HE_2months_Post_revision in ('HE(controlled)' 'Resolution of HE(controlled no more drugs)') then HE_2months_Post_revision ='HE(controlled)';
+if HE_last_Post_revision in ('No HE' 'Resolution of HE(controlled no more drugs)') then HE_last_Post_revision ='No HE';
+Last_HH_Frequency_n=0;
+
+age=intck('year',dob, Date_of_TIPS);
+
+if IPSPG^=. then do;
+if IPSPG<=8 then IPSPG_N='Less than 8';
+else if 8<IPSPG<12 then IPSPG_N='9-11';
+else if IPSPG>=12 then IPSPG_N='More than12';
+end;
+if FPSPG^=. then do;
+if FPSPG<=8 then FPSPG_N='Less than 8';
+else if 8<FPSPG<12 then FPSPG_N='9-11';
+else if FPSPG>=12 then FPSPG_N='More than12';
+end;
+
+if Pre_Child_pugh^='.' then do;
+if Pre_Child_pugh in ('B8' 'B9') then child_n='B';
+else if Pre_Child_pugh in ('C10' 'C11' 'C12') then child_n='C';
+end;
+
+if _2_months_child_pugh^='.' then do;
+if _2_months_child_pugh in ('B7' 'B8' 'B9') then M2_child_n='B';
+else if _2_months_child_pugh in ('C10' 'C12') then M2_child_n='C';
+end;
+
+if last_f_u_child_pugh^='.' then do;
+if last_f_u_child_pugh in ('A5') then FU_child_n='A';
+else if last_f_u_child_pugh in ('B7' 'B8' 'B9') then FU_child_n='B';
+else if last_f_u_child_pugh in ('C10' 'C12' 'C13') then FU_child_n='C';
+end;
+
+delta_pct=(delta/IPSPG)*100;
+
+if delta_pct<-33.3 then delta_change='less ';
+else if delta_pct=>-33.3 then delta_change='more';
+
+if Mortality^='.' then do;
+Mortality_n=.;
+Last_Followup_time_months =.;
+end;
+
+if Mortality='Yes' then do;
+Mortality_n=1;
+Last_Followup_time_months =Date_of_death_from_revision;
+end;
+
+else if Mortality='No' then do;
+Mortality_n=0; 
+Last_Followup_time_months =Time_elapsed_since_revision__mon;
+end;
+
+run;
+
+proc contents data=tips;run;
+
+proc freq data=tips2;run;
+proc means data=tips2;var _numeric_;run;
+
+proc means data=tips2 n nmiss mean std median QRANGE MIN MAX maxdec=2;var _numeric_;run;
+
+/**********************************************************************/
+/*PSPG*/
+
+proc means data=tips2 n nmiss mean std median qrange min max maxdec=2 ;
+var IPSPG FPSPG delta;
+run;
+
+proc univariate data=tips2 plots;var delta;
+ods select testsforlocation;
+run;
+
+proc freq data=tips2 order=freq;
+tables IPSPG_N*FPSPG_N/chisq fisher;
+run;
+
+proc univariate data=tips2 plots;
+var delta_pct;
+run;
+
+/*Ascities*/
+proc freq data=tips2 order=freq;
+tables pre_refractory_ascites_status _2_months_ascites_status Last_ascites_status;
+run;
+proc freq data=tips2;
+tables pre_refractory_ascites_status*_2_months_ascites_status pre_refractory_ascites_status*Last_ascites_status/chisq fisher;
+run;
+
+proc means data=tips2 n nmiss mean std median qrange min max maxdec=2;
+var  
+pre_ascites_Frequency _2_months_ascites_Frequency Last_ascites_Frequency
+pre_ascites_Mean_volume _2_months_ascites_Mean_volume Last_ascites_Mean_volume;
+run;
+
+%macro tt(var1,var2,i);
+proc ttest data=tips2;
+paired &var1*&var2;
+run;
+%mend;
+ %tt ( pre_ascites_Frequency,_2_months_ascites_Frequency,1);
+ %tt (pre_ascites_Frequency,Last_ascites_Frequency,2);
+ %tt (pre_ascites_Mean_volume,_2_months_ascites_Mean_volume,3);
+ %tt (pre_ascites_Mean_volume,Last_ascites_Mean_volume,4);
+
+/*hh*/
+proc freq data=tips2 order=freq;
+tables Pre_HH_status _2_months_HH_status Last_HH_status;
+run;
+proc freq data=tips2;
+tables Pre_HH_status*_2_months_HH_status Pre_HH_status*Last_HH_status/chisq fisher;
+run;
+
+data tips_paired; 
+input change $ count;
+datalines;
+yestono 2
+notoyes 0
+;
+run;
+
+proc freq data=tips_paired;
+tables change/binomial (p=0.5 level='yestono');
+weight count;
+run;
+
+proc means data=tips2 n nmiss mean std median qrange min max maxdec=2;
+var Pre_HH_Frequency  _2_months_HH_Frequency Last_HH_Frequency_n
+Pre_HH_Mean_volume _2_months_HH_Mean_volume Last_HH_Mean_volume;
+run;
+
+%macro tt(var1,var2,i);
+proc ttest data=tips2;
+paired &var1*&var2;
+run;
+%mend;
+ %tt ( Pre_HH_Frequency,_2_months_HH_Frequency,1);
+ %tt (Pre_HH_Frequency,Last_HH_Frequency_n,2);
+ %tt (Pre_HH_Mean_volume,_2_months_HH_Mean_volume,3);
+ %tt (Pre_HH_Mean_volume,Last_HH_Mean_volume,4);
+
+/*meld-na*/
+
+proc means data=tips2 n nmiss mean std median qrange min max maxdec=2;
+var Pre_MELD_Na _2months_MELD_Na F_U_MELD_Na ;
+run;
+proc ttest data=tips2;
+paired  Pre_MELD_Na*_2months_MELD_Na  ;
+run;
+proc ttest data=tips2;
+paired  Pre_MELD_Na*F_U_MELD_Na  ;
+run;
+
+/*meld*/
+
+proc means data=tips2 n nmiss mean std median qrange min max maxdec=2;
+var PreMELD _2_months_MELD last_f_u_MELD ;
+run;
+proc ttest data=tips2;
+paired  PreMELD*_2_months_MELD    ;
+run;
+proc ttest data=tips2;
+paired  PreMELD*last_f_u_MELD   ;
+run;
+
+
+/*child pugh*/
+proc freq data=tips2;
+tables child_n M2_child_n FU_child_n;
+run;
+
+proc freq data=tips2;
+tables child_n*M2_child_n/chisq fisher;
+run;
+proc freq data=tips2;
+tables child_n*FU_child_n/chisq fisher;
+run;
+
+proc catmod data=tips2;
+model child_n*M2_child_n*FU_child_n= _response_/ml;
+run;
+
+/*HE*/
+proc freq data=tips2;
+tables  HE_Pre_revison HE_2months_Post_revision HE_last_Post_revision;
+run;
+proc freq data=tips2;
+tables  HE_Pre_revison*HE_2months_Post_revision HE_Pre_revison*HE_last_Post_revision/chisq fisher ;
+run;
+
+/************************IMPROVED STATUS*******************/
+
+DATA tips3;/*used ascities mean*/
+SET tips2;
+    IF Last_ascites_Mean_volume < pre_ascites_Mean_volume THEN Outcome = "Improved";
+    ELSE IF Last_ascites_Mean_volume = pre_ascites_Mean_volume THEN Outcome = "Stable";
+	ELSE IF Last_ascites_Mean_volume > pre_ascites_Mean_volume THEN Outcome = "Worsened";
+
+	Meld_change    = last_f_u_MELD-PreMELD;
+	Meld_Na_change = F_U_MELD_Na-Pre_MELD_Na;
+
+RUN;
+
+PROC FREQ DATA=tips3;
+    TABLES Outcome;
+RUN;
+
+PROC FREQ DATA=tips3;
+    TABLES Outcome*child_n*FU_child_n*Meld_change*Meld_Na_change*delta*HE_last_Post_revision*HE_Pre_revison*mortality/ list;
+RUN;
+
+/********************************************************/
+/*KM */
+
+ods graphics on;
+PROC LIFETEST DATA=tips2 PLOTS=SURVIVAL(test atrisk(maxlen=13 )=0 to 30 by 2);
+    TIME Last_Followup_time_months*Mortality_n(0);
+    STRATA fpspg_n/test=logrank;
+	title "Kaplan-Meier(KM) Survival Curve for mortality after TIPS revision grouped by FPSPG" ;
+RUN;
+
+ods graphics on;
+PROC LIFETEST DATA=tips2 PLOTS=SURVIVAL(test atrisk(maxlen=13 )=0 to 30 by 2);
+    TIME Last_Followup_time_months*Mortality_n(0);
+	title "Kaplan-Meier(KM) Survival Curve " ;
+RUN;
+
+/********************************************************/
+proc sort data=tips2 ; by patient_id;run;
+
+PROC SGPLOT DATA=tips2;
+    scatter X=PreMELD Y=last_f_u_MELD / GROUP=fpspg_n ;
+    XAXIS LABEL="Pre MELD at Baseline";
+    YAXIS LABEL="Post MELD at Last Follow-up";
+	title "Scatter Plot between Pre-meld at baseline vs Post-Meld at last follow-up grouped by FPSPG";
+RUN;
+
+
+data tips4; set tips2;
+Meld_diff= last_f_u_MELD - PreMELD;
+run;
+proc sort data=tips4; by Meld_diff;run;
+data tips5; set tips4; patient_order=_N_;run;
+
+proc sgplot data=tips5;
+vbar patient_order/response =Meld_diff group=Details_of_last_f_u datalabel;
+xaxis display=none;
+yaxis label='Change in MELD scores';
+title 'Waterfall Plot of MELD Change(Post-Pre) by Last Status at Last Follow-up';
+run;
+
+proc sgplot data=tips5;
+vbar patient_order/response =Meld_diff group=IPSPG_N datalabel;
+xaxis display=none;
+yaxis label='Change in MELD scores';
+title 'Waterfall Plot of MELD Change(Post-Pre) by IPSPG categories';
+run;
+
+*END*
