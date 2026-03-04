@@ -1,6 +1,6 @@
 # SAS Statistical Analysis Portfolio
 **Kudratjot Brar** | Biostatistician | MPH Epidemiology | 
-[PubMed Publication](https://pubmed.ncbi.nlm.nih.gov/39692354/) | [LinkedIn](https://www.linkedin.com/in/kudratjot-brar)
+[PubMed Publication](https://pubmed.ncbi.nlm.nih.gov/39692354/) | [LinkedIn](https://www.linkedin.com/in/kudratjot-brar-019035241/)
 
 ## Overview
 This repository contains SAS code samples from clinical research projects conducted at UAB's Department of Internal Medicine & Population Science.
